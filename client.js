@@ -4576,6 +4576,8 @@ window.__ModuleLoader__.load({
         h('header', { className: 'dsh-board__head' },
           h('div', { className: 'dsh-board__headInner' },
             h('div', { className: 'dsh-board__titleRow' },
+              h('span', { className: 'dsh-board__mark', 'aria-hidden': true }, h(BoardGlyph, { size: 20 })),
+              h('h1', { className: 'dsh-board__title' }, t('page.title')),
               h('button', {
                 type: 'button',
                 className: 'dsh-board__railToggle',
@@ -4584,8 +4586,6 @@ window.__ModuleLoader__.load({
                 title: railCollapsed ? t('rail.expand') : t('rail.collapse'),
                 onClick: toggleRail,
               }, h(RailGlyph, { size: 18, open: !railCollapsed })),
-              h('span', { className: 'dsh-board__mark', 'aria-hidden': true }, h(BoardGlyph, { size: 20 })),
-              h('h1', { className: 'dsh-board__title' }, t('page.title')),
               h('span', {
                 className: 'dsh-board__pill dsh-board__pill--sync',
                 'data-tone': syncToneOf(sync.status),
