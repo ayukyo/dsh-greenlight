@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor and OS noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Local scratch
+tmp/
+*.tmp
+*.tmp-*
+
+# Never commit a live board document or its cold storage
+board.json
+board-archive.json
+board.json.corrupt-*
+board-archive.json.corrupt-*

@@ -1,0 +1,1 @@
+![Greenlight board: a project rail on the left; the selected project shows a summary card with its completion bar and counters, editable shared notes, reference entries, subtasks with colour accents and their own main Sessions, and an archive](preview.svg)

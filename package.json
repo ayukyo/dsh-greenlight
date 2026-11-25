@@ -1,0 +1,69 @@
+{
+  "name": "dsh-greenlight",
+  "version": "0.1.0",
+  "description": "Verifiable task board for DeepSeek Harness: project subtasks bound to sessions, with automatic acceptance — a card closes itself when its claims and deliverables check out, and only the unverifiable ones ask a human.",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "task-board",
+    "kanban",
+    "acceptance",
+    "verification",
+    "agent-workflow",
+    "project-management",
+    "evidence",
+    "session"
+  ],
+  "license": "MIT",
+  "author": "ayukyo",
+  "homepage": "https://github.com/ayukyo/dsh-greenlight#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ayukyo/dsh-greenlight.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ayukyo/dsh-greenlight/issues"
+  },
+  "engines": {
+    "dsh": ">=0.2.2-rc.3",
+    "node": ">=24.9.0"
+  },
+  "icon": "./icon.svg",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "host",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "docs",
+    "icon.svg"
+  ],
+  "scripts": {
+    "test": "node --test \"host/test/**/*.test.js\"",
+    "test:client": "node test/client-checks.cjs ./client.js ./host/board.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  }
+}
