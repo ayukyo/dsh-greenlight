@@ -105,10 +105,9 @@ test('the Host half registers routes and every tool', async () => {
     'greenlight_preview',
     'greenlight_project',
     'greenlight_recheck',
+    'greenlight_reference',
     'greenlight_review',
     'greenlight_session_attach',
-    'greenlight_shared_entry',
-    'greenlight_shared_set',
     'greenlight_task_create',
     'greenlight_task_submit',
     'greenlight_task_update',
@@ -122,7 +121,7 @@ test('the Host half registers routes and every tool', async () => {
     assert.equal(typeof tool.execute, 'function')
   }
   const diagnostics = diagnosticsState()
-  assert.equal(diagnostics.registered.length, 15)
+  assert.equal(diagnostics.registered.length, 14)
   assert.deepEqual(diagnostics.errors, [])
   assert.equal(diagnostics.serviceMissing, false)
 })
@@ -137,7 +136,7 @@ test('the diagnostics route reports the mounted surface', async () => {
   assert.equal(response.status, 200)
   assert.equal(body.ok, true)
   assert.equal(body.plugin, 'greenlight')
-  assert.equal(body.tools.registered.length, 15)
+  assert.equal(body.tools.registered.length, 14)
   assert.equal(body.boardFile, join(dir, 'board.json'))
 })
 
@@ -159,7 +158,7 @@ test('tools read and write through the same store as the routes', async () => {
   await assert.rejects(() => created.execute({ projectId: 'nope', title: 'x' }, {}), /项目不存在/)
 
   await store.mutate((draft) => {
-    draft.projects.push({ id: 'p1', name: 'Alpha', shared: '', tasks: [], memory: [], createdAt: Date.now() })
+    draft.projects.push({ id: 'p1', name: 'Alpha', references: [], tasks: [], memory: [], createdAt: Date.now() })
     return draft
   })
 
@@ -183,16 +182,24 @@ test('tools read and write through the same store as the routes', async () => {
   const entry = await memory.execute({ projectId: 'p1', text: '约定：先评审', taskId: task.taskId }, {})
   assert.ok(typeof entry.memoryId === 'string' && entry.memoryId !== '')
 
-  const shared = await toolNamed(tools, 'greenlight_shared_set')
-  const sharedResult = await shared.execute({ projectId: 'p1', text: 'docs/spec.md' }, {})
-  assert.equal(sharedResult.length, 'docs/spec.md'.length)
+  const reference = await toolNamed(tools, 'greenlight_reference')
+  const note = await reference.execute({
+    projectId: 'p1',
+    action: 'add',
+    kind: 'note',
+    name: '项目说明',
+    value: '先评审再实现',
+  }, {})
+  assert.match(note.id, /^ref-/)
+  assert.equal(note.references.length, 1)
 
   const attach = await toolNamed(tools, 'greenlight_session_attach')
   const bound = await attach.execute({ projectId: 'p1', taskId: task.taskId, sessionId: 'sess-1' }, {})
   assert.equal(bound.sessionId, 'sess-1')
 
   const detail = await toolNamed(tools, 'greenlight_project').execute({ projectId: 'p1' }, {})
-  assert.equal(detail.project.shared, 'docs/spec.md')
+  assert.equal(detail.project.references[0].kind, 'note')
+  assert.equal(detail.project.references[0].value, '先评审再实现')
   assert.equal(detail.project.tasks[0].status, 'todo')
   assert.equal(detail.project.tasks[0].progress, 55)
   assert.equal(detail.project.tasks[0].sessionId, 'sess-1')
@@ -209,8 +216,7 @@ test('a tool completion is auto-accepted only when it is verifiable', async () =
     id: 'p1',
     name: 'Alpha',
     acceptanceMode: 'auto',
-    shared: '',
-    sharedEntries: [],
+    references: [],
     tasks: [],
     memory: [],
     trash: [],
@@ -262,8 +268,7 @@ test('the submit tool records evidence and settles the card', async () => {
       id: 'p1',
       name: 'Alpha',
       acceptanceMode: 'auto',
-      shared: '',
-      sharedEntries: [],
+      references: [],
       tasks: [],
       memory: [],
       trash: [],
@@ -292,8 +297,7 @@ test('a human-mode project keeps tool completions in review', async () => {
       id: 'p1',
       name: 'Alpha',
       acceptanceMode: 'human',
-      shared: '',
-      sharedEntries: [],
+      references: [],
       tasks: [],
       memory: [],
       trash: [],
@@ -316,7 +320,7 @@ test('agent tools can still record progress, notes and rejection reasons', async
   const store = await makeStore()
   const tools = createBoardTools(store)
   await store.mutate((draft) => {
-    draft.projects.push({ id: 'p1', name: 'Alpha', shared: '', sharedEntries: [], tasks: [], memory: [], trash: [], createdAt: Date.now() })
+    draft.projects.push({ id: 'p1', name: 'Alpha', references: [], tasks: [], memory: [], trash: [], createdAt: Date.now() })
     return draft
   })
   const created = await toolNamed(tools, 'greenlight_task_create').execute({ projectId: 'p1', title: 'T' }, {})
@@ -340,8 +344,7 @@ test('the panel route may complete a card', async () => {
     draft.projects.push({
       id: 'p1',
       name: 'Alpha',
-      shared: '',
-      sharedEntries: [],
+      references: [],
       tasks: [{ id: 't1', title: 'T', status: 'review', progress: 90 }],
       memory: [],
       trash: [],
@@ -359,14 +362,14 @@ test('tools can set priority, due date, tags and refs', async () => {
   const store = await makeStore()
   const tools = createBoardTools(store)
   await store.mutate((draft) => {
-    draft.projects.push({ id: 'p1', name: 'Alpha', shared: '', sharedEntries: [], tasks: [], memory: [], trash: [], createdAt: Date.now() })
+    draft.projects.push({ id: 'p1', name: 'Alpha', references: [], tasks: [], memory: [], trash: [], createdAt: Date.now() })
     return draft
   })
-  const entry = await toolNamed(tools, 'greenlight_shared_entry').execute(
-    { projectId: 'p1', action: 'add', name: '接口文档', path: 'docs/api.md' },
+  const entry = await toolNamed(tools, 'greenlight_reference').execute(
+    { projectId: 'p1', action: 'add', kind: 'link', name: '接口文档', value: 'docs/api.md' },
     {},
   )
-  const sharedId = entry.entries[0].id
+  const referenceId = entry.id
 
   const created = await toolNamed(tools, 'greenlight_task_create').execute({ projectId: 'p1', title: 'T' }, {})
   await toolNamed(tools, 'greenlight_task_update').execute({
@@ -375,38 +378,50 @@ test('tools can set priority, due date, tags and refs', async () => {
     priority: 'high',
     dueDate: '2026-12-31',
     tags: ['后端', '联调'],
-    refs: [sharedId],
+    refs: [referenceId],
   }, {})
 
   const task = store.snapshot().projects[0].tasks[0]
   assert.equal(task.priority, 'high')
   assert.equal(task.dueDate, '2026-12-31')
   assert.deepEqual(task.tags, ['后端', '联调'])
-  assert.deepEqual(task.refs, [sharedId])
+  assert.deepEqual(task.refs, [referenceId])
 })
 
-test('the shared-entry tool lists and removes entries', async () => {
+test('the reference tool lists, updates and removes entries', async () => {
   const store = await makeStore()
   const tools = createBoardTools(store)
   await store.mutate((draft) => {
-    draft.projects.push({ id: 'p1', name: 'Alpha', shared: '', sharedEntries: [], tasks: [], memory: [], trash: [], createdAt: Date.now() })
+    draft.projects.push({ id: 'p1', name: 'Alpha', references: [], tasks: [], memory: [], trash: [], createdAt: Date.now() })
     return draft
   })
-  const tool = toolNamed(tools, 'greenlight_shared_entry')
-  const added = await tool.execute({ projectId: 'p1', action: 'add', name: 'A', path: 'a.md' }, {})
-  assert.equal(added.entries.length, 1)
+  const tool = toolNamed(tools, 'greenlight_reference')
+  const added = await tool.execute({ projectId: 'p1', action: 'add', kind: 'link', name: 'A', value: 'a.md' }, {})
+  assert.match(added.id, /^ref-/)
+  assert.equal(added.references.length, 1)
+  assert.equal(added.references[0].kind, 'link')
+  assert.equal(added.references[0].staleSince, 0)
+
   const listed = await tool.execute({ projectId: 'p1', action: 'list' }, {})
-  assert.equal(listed.entries[0].name, 'A')
-  const removed = await tool.execute({ projectId: 'p1', action: 'remove', entryId: added.entries[0].id }, {})
-  assert.equal(removed.entries.length, 0)
+  assert.equal(listed.references[0].name, 'A')
+
+  const updated = await tool.execute({ projectId: 'p1', action: 'update', id: added.id, value: 'b.md' }, {})
+  assert.equal(updated.id, added.id)
+  assert.equal(updated.references[0].value, 'b.md')
+
+  const removed = await tool.execute({ projectId: 'p1', action: 'remove', id: added.id }, {})
+  assert.equal(removed.removed, true)
+  assert.equal(removed.references.length, 0)
   await assert.rejects(() => tool.execute({ projectId: 'p1', action: 'nope' }, {}), /action 只能是/)
+  await assert.rejects(() => tool.execute({ projectId: 'p1', action: 'add', kind: 'link', name: '无路径' }, {}), /link 需要/)
+  await assert.rejects(() => tool.execute({ projectId: 'p1', action: 'update', id: 'ref-gone', name: 'x' }, {}), /资料不存在/)
 })
 
 test('the trash tool lists and restores removed cards', async () => {
   const store = await makeStore()
   const tools = createBoardTools(store)
   await store.mutate((draft) => {
-    draft.projects.push({ id: 'p1', name: 'Alpha', shared: '', sharedEntries: [], tasks: [], memory: [], trash: [], createdAt: Date.now() })
+    draft.projects.push({ id: 'p1', name: 'Alpha', references: [], tasks: [], memory: [], trash: [], createdAt: Date.now() })
     return draft
   })
   const created = await toolNamed(tools, 'greenlight_task_create').execute({ projectId: 'p1', title: '删掉的卡' }, {})
@@ -436,11 +451,34 @@ test('tool renders produce model-facing text', async () => {
   assert.match(emptyContent[0].text, /还没有项目/)
 
   await store.mutate((draft) => {
-    draft.projects.push({ id: 'p1', name: 'Alpha', shared: '', tasks: [], memory: [], createdAt: Date.now() })
+    draft.projects.push({
+      id: 'p1',
+      name: 'Alpha',
+      references: [
+        { id: 'ref-a', kind: 'note', name: '项目说明', value: '先评审再实现', description: '', staleSince: 0 },
+        { id: 'ref-b', kind: 'link', name: '设计稿', value: 'docs/design.md', description: '首页与详情页 2 版', staleSince: 0 },
+        { id: 'ref-c', kind: 'link', name: '旧站点备份', value: 'legacy/site.zip', description: '', staleSince: 1 },
+      ],
+      tasks: [],
+      memory: [],
+      createdAt: Date.now(),
+    })
     return draft
   })
   const value = await overview.execute({}, {})
   const content = overview.output.render({}, value)
   assert.match(content[0].text, /Alpha/)
   assert.match(content[0].text, /\[p1\]/)
+
+  // The 资料 block names the kind, the value, the description and the stale
+  // mark — the shape a human reads on the card.
+  const projectTool = toolNamed(tools, 'greenlight_project')
+  const projectValue = await projectTool.execute({ projectId: 'p1' }, {})
+  const projectText = projectTool.output.render({}, projectValue)[0].text
+  assert.ok(projectText.includes([
+    '资料：',
+    '- [约定] 项目说明：先评审再实现',
+    '- [链接] 设计稿：docs/design.md（首页与详情页 2 版）',
+    '- [链接] 旧站点备份：legacy/site.zip（已失效）',
+  ].join('\n')), projectText)
 })

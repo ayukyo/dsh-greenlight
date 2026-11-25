@@ -154,13 +154,17 @@ test('prepareBatch lets a recheck see references added in the same batch', async
   const board = emptyBoard()
   applyOp(board, { type: 'project.add', id: 'p1', name: 'P' })
   const prepared = await prepareBatch(board, [
-    { type: 'sharedEntry.add', projectId: 'p1', id: 's1', name: '缺失', path: 'docs/nope.md' },
+    { type: 'reference.add', projectId: 'p1', id: 's1', kind: 'link', name: '缺失', value: 'docs/nope.md' },
+    { type: 'reference.add', projectId: 'p1', id: 's2', kind: 'note', name: '约定', value: 'docs/nope.md' },
     { type: 'project.recheck', projectId: 'p1' },
   ], { stat: async () => null })
-  assert.deepEqual(prepared[1].staleEntries, ['s1'], 'the sweep must see the entry the batch just added')
+  assert.deepEqual(prepared[2].staleEntries, ['s1'], 'the sweep must see the link the batch just added, and only links')
   assert.equal(applyOp(board, prepared[0]), null)
   assert.equal(applyOp(board, prepared[1]), null)
-  assert.equal(board.projects[0].sharedEntries[0].staleSince > 0, true)
+  assert.equal(applyOp(board, prepared[2]), null)
+  const references = board.projects[0].references
+  assert.equal(references.find(entry => entry.id === 's1').staleSince > 0, true)
+  assert.equal(references.find(entry => entry.id === 's2').staleSince, 0, 'a note is never probed')
 })
 
 test('a completion in the same batch sees deliverables declared earlier in that batch', async () => {

@@ -41,7 +41,7 @@ function boardWithOneTask() {
     projects: [{
       id: 'p1',
       name: 'Alpha',
-      shared: 'docs/spec.md',
+      references: [{ id: 'ref-1', kind: 'link', name: '设计稿', value: 'docs/spec.md' }],
       tasks: [{ id: 't1', title: '第一件事', note: '描述', status: 'running', progress: 40 }],
       memory: [{ id: 'm1', text: '约定', taskId: 't1', createdAt: 1 }],
     }],
@@ -75,9 +75,15 @@ test('version-1 flat tasks migrate into one project with statuses', () => {
 test('version-2 projects keep their fields and gain a status', () => {
   const board = normalizeBoard({
     version: 2,
-    projects: [{ id: 'p', name: 'P', shared: '路径', tasks: [{ id: 't', title: 'T', progress: 100 }], memory: [] }],
+    projects: [{
+      id: 'p',
+      name: 'P',
+      references: [{ id: 'ref-1', kind: 'note', name: '约定', value: '路径' }],
+      tasks: [{ id: 't', title: 'T', progress: 100 }],
+      memory: [],
+    }],
   })
-  assert.equal(board.projects[0].shared, '路径')
+  assert.equal(board.projects[0].references[0].value, '路径')
   assert.equal(board.projects[0].tasks[0].status, 'done')
   assert.equal(board.projects[0].tasks[0].reviewReason, '')
 })
@@ -101,15 +107,27 @@ test('percent, tone and counts follow the documented rules', () => {
   assert.equal(boardCounts(board).running, 1)
 })
 
-test('project operations: add, rename, shared, remove, duplicate id', () => {
+test('project operations: add, rename, shared alias, remove, duplicate id', () => {
   const board = emptyBoard()
   assert.equal(applyOp(board, { type: 'project.add', id: 'p1', name: 'Alpha' }), null)
   assert.equal(board.projects.length, 1)
+  assert.deepEqual(board.projects[0].references, [])
   assert.equal(applyOp(board, { type: 'project.add', id: 'p1', name: 'Again' }), 'duplicate_id')
   assert.equal(applyOp(board, { type: 'project.rename', projectId: 'p1', name: 'Beta' }), null)
   assert.equal(board.projects[0].name, 'Beta')
+  // The version-9 free-text op is still accepted: it is carried as one note.
   assert.equal(applyOp(board, { type: 'project.setShared', projectId: 'p1', shared: 'a/b.md' }), null)
-  assert.equal(board.projects[0].shared, 'a/b.md')
+  assert.equal(board.projects[0].references.length, 1)
+  assert.equal(board.projects[0].references[0].kind, 'note')
+  assert.equal(board.projects[0].references[0].name, '项目说明')
+  assert.equal(board.projects[0].references[0].value, 'a/b.md')
+  // A second write updates that same note instead of piling up entries.
+  assert.equal(applyOp(board, { type: 'project.setShared', projectId: 'p1', shared: 'c/d.md' }), null)
+  assert.equal(board.projects[0].references.length, 1)
+  assert.equal(board.projects[0].references[0].value, 'c/d.md')
+  // An empty text removes the note again.
+  assert.equal(applyOp(board, { type: 'project.setShared', projectId: 'p1', shared: '' }), null)
+  assert.equal(board.projects[0].references.length, 0)
   assert.equal(applyOp(board, { type: 'project.rename', projectId: 'nope', name: 'X' }), 'unknown_project')
   assert.equal(applyOp(board, { type: 'project.remove', projectId: 'p1' }), null)
   assert.equal(board.projects.length, 0)
@@ -343,31 +361,85 @@ test('acceptance rules are configurable per project', () => {
   assert.equal(project.rootDir, '/repo')
 })
 
-test('the document migrates to v9 with automatic acceptance as the default', () => {
+test('the document migrates to v10 with automatic acceptance as the default', () => {
   const legacy = {
-    version: 7,
+    version: 9,
     revision: 3,
     projects: [{
       id: 'p1',
       name: '旧项目',
-      shared: '',
-      sharedEntries: [],
+      references: [],
       memory: [],
       trash: [],
       tasks: [{ id: 't1', title: '旧卡', status: 'done', progress: 100 }],
     }],
   }
   const board = normalizeBoard(legacy)
-  assert.equal(board.version, 9)
+  assert.equal(board.version, 10)
   assert.equal(board.revision, 3)
   const project = board.projects[0]
   assert.equal(project.acceptanceMode, 'auto')
+  assert.deepEqual(project.references, [])
   const task = project.tasks[0]
   assert.equal(task.acceptedBy, '')
   assert.equal(task.requireHuman, false)
   assert.equal(task.evidence, '')
   assert.deepEqual(task.deliverables, [])
   assert.equal(task.acceptance, null)
+})
+
+test('a version-9 document migrates its shared text and entries into references', () => {
+  const legacy = {
+    version: 9,
+    revision: 4,
+    projects: [{
+      id: 'p1',
+      name: '旧项目',
+      shared: '先评审再实现',
+      sharedEntries: [{
+        id: 's1',
+        name: '设计稿',
+        path: 'docs/design.md',
+        description: '首页与详情页 2 版',
+        staleSince: 12,
+      }],
+      tasks: [{ id: 't1', title: '旧卡', refs: ['s1', 'ghost'], status: 'todo', progress: 0 }],
+      memory: [],
+      trash: [],
+    }],
+  }
+  const board = normalizeBoard(legacy)
+  assert.equal(board.version, 10)
+  const project = board.projects[0]
+  assert.equal(project.references.length, 2, 'the text and the entry become two references')
+
+  // The free text comes first, as a note.
+  const note = project.references[0]
+  assert.equal(note.kind, 'note')
+  assert.equal(note.name, '项目说明')
+  assert.equal(note.value, '先评审再实现')
+  assert.equal(note.description, '')
+  assert.equal(note.staleSince, 0)
+  assert.match(note.id, /^ref-/)
+
+  // The entry becomes a link, keeping its id so card references stay valid.
+  const link = project.references[1]
+  assert.equal(link.id, 's1')
+  assert.equal(link.kind, 'link')
+  assert.equal(link.name, '设计稿')
+  assert.equal(link.value, 'docs/design.md')
+  assert.equal(link.description, '首页与详情页 2 版')
+  assert.equal(link.staleSince, 12)
+  assert.equal('path' in link, false, 'the entry shape is replaced, not extended')
+
+  assert.deepEqual(project.tasks[0].refs, ['s1'], 'the card still points at the migrated link')
+  assert.equal('shared' in project, false, 'the version-9 fields are not written back')
+  assert.equal('sharedEntries' in project, false)
+
+  // Idempotence: a second pass must add nothing.
+  const again = normalizeBoard(board)
+  assert.equal(again.projects[0].references.length, 2, 'a second pass adds nothing')
+  assert.deepEqual(again.projects[0].tasks[0].refs, ['s1'])
 })
 
 test('subtask operations: add, patch whitelist, move with expected status, remove clears links', () => {
@@ -621,22 +693,24 @@ test('the decision anchor is distilled and merged incrementally', () => {
   assert.equal(project.anchor.risks.length, 1)
 })
 
-test('recheck marks stale references and refreshes deliverable verdicts', () => {
+test('recheck marks stale links and refreshes deliverable verdicts', () => {
   const board = boardWithOneTask()
   const project = board.projects[0]
-  assert.equal(applyOp(board, { type: 'sharedEntry.add', projectId: 'p1', id: 's1', name: '文档', path: 'docs/a.md' }), null)
-  assert.equal(applyOp(board, { type: 'sharedEntry.add', projectId: 'p1', id: 's2', name: '还在的', path: 'docs/b.md' }), null)
+  assert.equal(applyOp(board, { type: 'reference.add', projectId: 'p1', id: 's1', kind: 'link', name: '文档', value: 'docs/a.md' }), null)
+  assert.equal(applyOp(board, { type: 'reference.add', projectId: 'p1', id: 's2', kind: 'link', name: '还在的', value: 'docs/b.md' }), null)
+  assert.equal(applyOp(board, { type: 'reference.add', projectId: 'p1', id: 's3', kind: 'note', name: '约定', value: '先评审' }), null)
   const task = project.tasks[0]
   task.deliverables = ['docs/a.md']
 
   assert.equal(applyOp(board, {
     type: 'project.recheck',
     projectId: 'p1',
-    staleEntries: ['s1'],
+    staleEntries: ['s1', 's3'],
     deliverables: { t1: { checked: true, missing: ['docs/a.md'], unresolved: [] } },
   }), null)
-  assert.equal(project.sharedEntries.find(entry => entry.id === 's1').staleSince > 0, true)
-  assert.equal(project.sharedEntries.find(entry => entry.id === 's2').staleSince, 0)
+  assert.equal(project.references.find(entry => entry.id === 's1').staleSince > 0, true)
+  assert.equal(project.references.find(entry => entry.id === 's2').staleSince, 0)
+  assert.equal(project.references.find(entry => entry.id === 's3').staleSince, 0, 'a note is never stale')
   assert.deepEqual(task.verification.missing, ['docs/a.md'])
   assert.equal(project.lastCheckAt > 0, true)
 
@@ -647,7 +721,7 @@ test('recheck marks stale references and refreshes deliverable verdicts', () => 
     staleEntries: [],
     deliverables: { t1: { checked: true, missing: [], unresolved: [] } },
   }), null)
-  assert.equal(project.sharedEntries.find(entry => entry.id === 's1').staleSince, 0)
+  assert.equal(project.references.find(entry => entry.id === 's1').staleSince, 0)
   assert.deepEqual(task.verification.missing, [])
 })
 

@@ -38,7 +38,7 @@ agent 用 `greenlight_*` 工具交活时附上**完成说明 / 验证项 / 交�
 
 **协作与上下文**
 - 项目 → 子任务两级；每个子任务可绑定一个主会话，支持一键派活
-- 项目级**共享资料**、**引用资料**（可写文档路径/链接，失效自动标 ⚠ 已失效）、**项目记忆**
+- 项目级**资料**（`链接` 与 `约定` 两类：链接会被真实复查、失效自动标 ⚠；两类都能被卡片引用）、**项目记忆**
 - **决策锚点**：需求摘要 / 关键决策 / 未解决风险 / 计划偏离，跨会话复用不再重读全文
 - **下一步**：每张卡写"接下来做什么"，派活提示词直接沿用
 
@@ -92,7 +92,7 @@ greenlight_task_submit {
 | 工具 | 作用 |
 |---|---|
 | `greenlight_overview` | 看板总览：项目、计数、需要处理的卡片 |
-| `greenlight_project` | 读单个项目：任务、共享资料、验收规则、锚点 |
+| `greenlight_project` | 读单个项目：任务、项目资料、验收规则、锚点 |
 | `greenlight_task_create` | 建卡（标题、描述、优先级、截止、标签） |
 | `greenlight_task_update` | 改卡：状态/进度/备注/阻塞/完成说明/交付物/下一步 |
 | `greenlight_task_submit` | **交付**：完成说明 + 验证项 + 交付物 + 进度，由 Host 判定 |
@@ -102,8 +102,9 @@ greenlight_task_submit {
 | `greenlight_review` | 记录一次独立复评（结论 + 说明 + 由谁） |
 | `greenlight_archive` | 冷存储：列出 / 归档 / 恢复已完成卡片 |
 | `greenlight_memory_add` | 追加项目记忆 |
-| `greenlight_shared_set` | 设置项目共享资料正文 |
-| `greenlight_shared_entry` | 管理引用资料（增删改、列表） |
+| `greenlight_reference` | 项目资料：link（路径/链接，会被复查、可被卡片引用）与 
+ote（约定文本）两类，列表/增/改/删 |
+
 | `greenlight_session_attach` | 把卡片绑定到主会话 |
 | `greenlight_trash` | 回收站：列出 / 恢复 / 清空 |
 

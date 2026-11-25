@@ -11,7 +11,7 @@
  * change made from a conversation and a change made in the panel cannot take
  * different paths.
  */
-import { applyOps, boardCounts, findProject, findTask, projectPercent, projectTone, statusCounts } from './board.js'
+import { applyOps, boardCounts, createId, findProject, findTask, projectPercent, projectTone, statusCounts } from './board.js'
 import { archivedCount, isArchiveOp, putCards, takeCards } from './archive.js'
 import { prepareBatch } from './verify.js'
 
@@ -30,6 +30,7 @@ function messageFor(code) {
   switch (code) {
     case 'unknown_project': return '项目不存在（projectId 有误）'
     case 'unknown_task': return '子任务不存在（taskId 有误）'
+    case 'unknown_reference': return '资料不存在（id 有误）'
     case 'invalid_field': return '参数不合法'
     case 'duplicate_id': return '该 id 已存在'
     case 'stale_status': return '子任务已不在预期的状态列，请先重新读取'
@@ -223,6 +224,33 @@ function acceptanceLine(value, prefix) {
 }
 
 /**
+ * Render one project reference as a model-facing line: the kind badge carries
+ * the distinction the model has to keep — a link is re-checked, a note is not.
+ * @param reference - reference to render.
+ * @returns the bullet line.
+ */
+function referenceLine(reference) {
+  const kindLabel = reference.kind === 'note' ? '约定' : '链接'
+  const valueText = reference.value === '' ? '' : '：' + reference.value
+  // The description and the stale mark share one bracket, so a line never ends
+  // with two parentheses.
+  const marks = []
+  if (reference.description !== '') marks.push(reference.description)
+  if (reference.staleSince > 0) marks.push('已失效')
+  return '- [' + kindLabel + '] ' + reference.name + valueText
+    + (marks.length === 0 ? '' : '（' + marks.join('；') + '）')
+}
+
+/**
+ * Render a list of references, one line each.
+ * @param references - references to render.
+ * @returns the lines joined by newlines.
+ */
+function renderReferences(references) {
+  return references.map(referenceLine).join('\n')
+}
+
+/**
  * Build the tool definitions for one store.
  * @param store - board store.
  * @returns tool definitions ready for `ctx.tools.register`.
@@ -290,7 +318,7 @@ export function createBoardTools(store, options) {
     },
     {
       name: 'greenlight_project',
-      description: 'Read one project: its shared reference text, its subtasks (bounded), and its recent memory entries.',
+      description: 'Read one project: its references (links and convention notes), its subtasks (bounded), and its recent memory entries.',
       parameters: {
         type: 'object',
         required: ['projectId'],
@@ -307,14 +335,14 @@ export function createBoardTools(store, options) {
           properties: {
             project: {
               type: 'object',
-              required: ['id', 'name', 'shared', 'tasks', 'memory'],
+              required: ['id', 'name', 'references', 'tasks', 'memory'],
               additionalProperties: false,
               properties: {
                 id: { type: 'string' },
                 name: { type: 'string' },
                 percent: { type: 'number' },
                 tone: { type: 'string' },
-                shared: { type: 'string' },
+                references: { type: 'array', items: { type: 'object', additionalProperties: true } },
                 tasks: { type: 'array', items: { type: 'object', additionalProperties: true } },
                 memory: { type: 'array', items: { type: 'object', additionalProperties: true } },
                 truncated: { type: 'boolean' },
@@ -325,7 +353,9 @@ export function createBoardTools(store, options) {
         render: (_args, value) => {
           const project = value.project
           const head = '项目「' + project.name + '」 ' + project.percent + '%（' + project.tasks.length + ' 个子任务）'
-          const shared = project.shared === '' ? '共享资料：空' : '共享资料：\n' + project.shared
+          const references = project.references.length === 0
+            ? '资料：空'
+            : '资料：\n' + renderReferences(project.references)
           const tasks = project.tasks.length === 0
             ? '子任务：无'
             : '子任务：\n' + project.tasks.map(task =>
@@ -335,7 +365,7 @@ export function createBoardTools(store, options) {
           const memory = project.memory.length === 0
             ? '项目记忆：无'
             : '项目记忆：\n' + project.memory.map(entry => '- ' + entry.text).join('\n')
-          return [{ type: 'text', text: [head, shared, tasks, memory].join('\n\n') }]
+          return [{ type: 'text', text: [head, references, tasks, memory].join('\n\n') }]
         },
       },
       async execute(args) {
@@ -368,7 +398,14 @@ export function createBoardTools(store, options) {
             acceptanceMode: project.acceptanceMode,
             acceptanceRules: project.acceptanceRules,
             rootDir: project.rootDir,
-            shared: project.shared,
+            references: project.references.map(entry => ({
+              id: entry.id,
+              kind: entry.kind,
+              name: entry.name,
+              value: entry.value,
+              description: entry.description,
+              staleSince: entry.staleSince,
+            })),
             tasks,
             memory,
             truncated: project.tasks.length > DETAIL_TASK_LIMIT || project.memory.length > DETAIL_MEMORY_LIMIT,
@@ -446,7 +483,7 @@ export function createBoardTools(store, options) {
           refs: {
             type: 'array',
             items: { type: 'string' },
-            description: 'Ids of shared reference entries this subtask points at',
+            description: 'Ids of the project references this subtask points at',
           },
         },
       },
@@ -697,7 +734,7 @@ export function createBoardTools(store, options) {
     },
     {
       name: 'greenlight_recheck',
-      description: 'Re-check every declared path in a project: shared references that no longer resolve are marked stale, and card deliverables are probed again. Read-only on the project files; only board flags change.',
+      description: 'Re-check every declared path in a project: link references that no longer resolve are marked stale, and card deliverables are probed again. Notes are never probed. Read-only on the project files; only board flags change.',
       parameters: {
         type: 'object',
         required: ['projectId'],
@@ -728,7 +765,7 @@ export function createBoardTools(store, options) {
         if (project === undefined) throw new Error(messageFor('unknown_project'))
         await apply({ type: 'project.recheck', projectId })
         const after = findProject(store.snapshot(), projectId)
-        const staleEntries = after.sharedEntries.filter(entry => entry.staleSince > 0).map(entry => entry.name)
+        const staleEntries = after.references.filter(entry => entry.staleSince > 0).map(entry => entry.name)
         const missingDeliverables = []
         for (const task of after.tasks) {
           if (task.verification !== null && (task.verification.missing.length > 0 || task.verification.unresolved.length > 0)) {
@@ -910,36 +947,6 @@ export function createBoardTools(store, options) {
       },
     },
     {
-      name: 'greenlight_shared_set',
-      description: 'Replace the shared reference text of one project. Subtasks in that project share it: document paths, conventions, links.',
-      parameters: {
-        type: 'object',
-        required: ['projectId', 'text'],
-        additionalProperties: false,
-        properties: {
-          projectId: { type: 'string' },
-          text: { type: 'string' },
-        },
-      },
-      output: {
-        schema: {
-          type: 'object',
-          required: ['projectId', 'length'],
-          additionalProperties: false,
-          properties: { projectId: { type: 'string' }, length: { type: 'number' } },
-        },
-        render: (_args, value) => [{ type: 'text', text: '已更新共享资料（' + value.length + ' 字符）' }],
-      },
-      async execute(args) {
-        const projectId = requireString(args, 'projectId')
-        const text = optionalString(args, 'text')
-        if (text === undefined) throw new Error('参数 text 必须是字符串')
-        await store.init()
-        await apply({ type: 'project.setShared', projectId, shared: text })
-        return { projectId, length: text.length }
-      },
-    },
-    {
       name: 'greenlight_session_attach',
       description: 'Bind a subtask to the Session that carries its work, or clear the binding with an empty sessionId.',
       parameters: {
@@ -976,38 +983,42 @@ export function createBoardTools(store, options) {
         return { taskId, sessionId }
       },
     },
-  {
-      name: 'greenlight_shared_entry',
-      description: 'Manage a project shared reference entry: list them, add one (a named path or link every subtask may reference), or remove one by id.',
+    {
+      name: 'greenlight_reference',
+      description: 'Manage the references of one project: a single list holding two kinds. "link" is a path or URL — the Host re-checks it on every sweep, so a target that cannot be found is marked stale, and a card may point at it through refs. "note" is convention text for the project: it is never re-checked and never goes stale. Actions: list, add, update, remove.',
       parameters: {
         type: 'object',
         required: ['projectId', 'action'],
         additionalProperties: false,
         properties: {
           projectId: { type: 'string' },
-          action: { type: 'string', enum: ['list', 'add', 'remove'] },
-          entryId: { type: 'string', description: 'Required for remove' },
-          name: { type: 'string', description: 'Required for add' },
-          path: { type: 'string', description: 'Path or link' },
+          action: { type: 'string', enum: ['list', 'add', 'update', 'remove'] },
+          id: { type: 'string', description: 'Reference id: required for update and remove, optional for add' },
+          kind: { type: 'string', enum: ['link', 'note'], description: 'Required when adding: link is re-checked, note is never' },
+          name: { type: 'string', description: 'Display name; required when adding' },
+          value: { type: 'string', description: 'link: a path or URL; note: the convention text' },
           description: { type: 'string' },
         },
       },
       output: {
         schema: {
           type: 'object',
-          required: ['entries'],
+          required: ['action', 'references'],
           additionalProperties: false,
           properties: {
-            entries: { type: 'array', items: { type: 'object', additionalProperties: true } },
+            action: { type: 'string' },
+            references: { type: 'array', items: { type: 'object', additionalProperties: true } },
+            id: { type: 'string' },
             removed: { type: 'boolean' },
           },
         },
         render: (_args, value) => [{
           type: 'text',
-          text: value.entries.length === 0
-            ? '该项目没有共享资料条目。'
-            : '共享资料（' + value.entries.length + '）：\n' + value.entries.map(entry =>
-              '- ' + entry.name + (entry.path === '' ? '' : ' [' + entry.path + ']') + ' (' + entry.id + ')').join('\n'),
+          text: value.action === 'list'
+            ? (value.references.length === 0
+              ? '该项目没有资料条目。'
+              : '项目资料（' + value.references.length + '）：\n' + renderReferences(value.references))
+            : (value.action === 'add' ? '已添加资料 ' : value.action === 'update' ? '已更新资料 ' : '已删除资料 ') + value.id,
         }],
       },
       async execute(args) {
@@ -1017,28 +1028,45 @@ export function createBoardTools(store, options) {
         const project = findProject(store.snapshot(), projectId)
         if (project === undefined) throw new Error(messageFor('unknown_project'))
 
-        if (action === 'list') {
-          return { entries: project.sharedEntries.map(entry => ({ id: entry.id, name: entry.name, path: entry.path, description: entry.description })) }
-        }
+        if (action === 'list') return { action, references: project.references.slice() }
         if (action === 'add') {
+          const kind = optionalString(args, 'kind')
+          if (kind === undefined) throw new Error('add 需要 kind（link 或 note）')
+          if (kind !== 'link' && kind !== 'note') throw new Error('kind 只能是 link / note')
           const name = requireString(args, 'name')
-          const path = optionalString(args, 'path')
+          const value = optionalString(args, 'value')
+          if (kind === 'link' && (value === undefined || value.trim() === '')) {
+            throw new Error('link 需要非空的 value（路径或 URL）')
+          }
           const description = optionalString(args, 'description')
-          const entryId = 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
-          const op = { type: 'sharedEntry.add', projectId, id: entryId, name }
-          if (path !== undefined) op.path = path
+          const given = optionalString(args, 'id')
+          const id = given === undefined || given === '' ? createId('ref-') : given
+          const op = { type: 'reference.add', projectId, id, kind, name, value: value === undefined ? '' : value }
           if (description !== undefined) op.description = description
           await apply(op)
-          const after = findProject(store.snapshot(), projectId)
-          return { entries: after.sharedEntries.map(entry => ({ id: entry.id, name: entry.name, path: entry.path, description: entry.description })) }
+          return { action, id, references: findProject(store.snapshot(), projectId).references }
+        }
+        if (action === 'update') {
+          const id = requireString(args, 'id')
+          const patch = {}
+          const kind = optionalString(args, 'kind')
+          const name = optionalString(args, 'name')
+          const value = optionalString(args, 'value')
+          const description = optionalString(args, 'description')
+          if (kind !== undefined) patch.kind = kind
+          if (name !== undefined) patch.name = name
+          if (value !== undefined) patch.value = value
+          if (description !== undefined) patch.description = description
+          if (Object.keys(patch).length === 0) throw new Error('至少要给出一个要修改的字段')
+          await apply({ type: 'reference.update', projectId, referenceId: id, patch })
+          return { action, id, references: findProject(store.snapshot(), projectId).references }
         }
         if (action === 'remove') {
-          const entryId = requireString(args, 'entryId')
-          await apply({ type: 'sharedEntry.remove', projectId, entryId })
-          const after = findProject(store.snapshot(), projectId)
-          return { entries: after.sharedEntries.map(entry => ({ id: entry.id, name: entry.name, path: entry.path, description: entry.description })), removed: true }
+          const id = requireString(args, 'id')
+          await apply({ type: 'reference.remove', projectId, referenceId: id })
+          return { action, id, references: findProject(store.snapshot(), projectId).references, removed: true }
         }
-        throw new Error('action 只能是 list / add / remove')
+        throw new Error('action 只能是 list / add / update / remove')
       },
     },
     {

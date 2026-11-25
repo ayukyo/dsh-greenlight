@@ -3,7 +3,7 @@
  *
  * Runs the real client.js with stubbed browser globals, a minimal React hook
  * runtime, and a fake Cordis Client context. Verifies: module init, slot
- * registration, document migration, title derivation, shared reference text,
+ * registration, document migration, title derivation, project references,
  * subtask fields, Session create/link/unbind/title-sync, project memory, and
  * deletion paths. It never touches the user's UI.
  */
@@ -369,6 +369,9 @@ const hostModulePath = process.argv[3]
 let hostBoard
 let hostState = null
 let hostArchive = { count: 0, projects: [] }
+/** Every operation the client sent, kept so the harness can prove which
+ *  write vocabulary is in use. */
+const sentOps = []
 
 function jsonResponse(status, body) {
   return { ok: status >= 200 && status < 300, status, json: async () => body }
@@ -393,6 +396,9 @@ global.fetch = async (url, init) => {
     const headers = (init && init.headers) || {}
     if (headers['x-greenlight'] !== '1') return jsonResponse(403, { ok: false, code: 'forbidden' })
     const payload = JSON.parse(init.body)
+    for (const op of payload.ops) {
+      if (op !== null && typeof op === 'object') sentOps.push(op)
+    }
     if (payload.revision !== hostState.board.revision) {
       return jsonResponse(409, {
         ok: false,
@@ -522,6 +528,14 @@ const fakeCtx = {
   check('both share one panel id', !!sidebar && !!main && sidebar.options.id === main.options.key)
   check('locale namespace bound', boundNamespace === 'greenlight', boundNamespace)
   check('sidebar label localized', !!sidebar && sidebar.options.label() === '绿灯看板', !!sidebar ? sidebar.options.label() : '')
+  check('the merged section is named in both locales',
+    dictionaries.greenlight.zh['references.section'] === '项目资料'
+    && dictionaries.greenlight.en['references.section'] === 'Project references',
+    JSON.stringify({ zh: dictionaries.greenlight.zh['references.section'], en: dictionaries.greenlight.en['references.section'] }))
+  check('the shared.* locale group is gone',
+    Object.keys(dictionaries.greenlight.zh).every(key => !key.startsWith('shared.'))
+    && Object.keys(dictionaries.greenlight.en).every(key => !key.startsWith('shared.')),
+    JSON.stringify(Object.keys(dictionaries.greenlight.zh).filter(key => key.startsWith('shared.'))))
 
   const Page = main.component
   const injected = main.options.inject()
@@ -553,7 +567,7 @@ const fakeCtx = {
   check('legacy notes migrated', migrated[0].tasks[0].note === '会话X')
   check('legacy tasks carry no session binding', migrated[0].tasks[0].sessionId === '')
   check('legacy tasks default to manual titles', migrated[0].tasks[0].titleSource === 'manual')
-  check('project has empty shared text', migrated[0].shared === '')
+  check('legacy project starts with no references', migrated[0].references.length === 0)
   check('v2 document keeps projects', testHelpers.parseProjects(JSON.stringify({
     version: 2,
     projects: [{ id: 'p1', name: 'P', tasks: [{ id: 't1', title: 'T' }], memory: [] }],
@@ -565,13 +579,43 @@ const fakeCtx = {
   check('blocked forces red', testHelpers.projectTone({ tasks: [{ progress: 100, blocked: true }] }) === 'red')
   check('85% is green', testHelpers.projectTone({ tasks: [{ progress: 85, blocked: false }] }) === 'green')
   check('empty project is idle', testHelpers.projectTone({ tasks: [] }) === 'idle')
-  check('round-trip keeps version 7', JSON.parse(testHelpers.serializeProjects(migrated)).version === 7)
+  check('round-trip keeps version 10', JSON.parse(testHelpers.serializeProjects(migrated)).version === 10)
+
+  // Version 9 held project material in `shared` (free text) plus a
+  // `sharedEntries` list; version 10 folds both into one typed list.
+  const v9Doc = JSON.stringify({
+    version: 9,
+    projects: [{
+      id: 'p-v9',
+      name: '旧项目',
+      shared: '先评审再实现',
+      sharedEntries: [
+        { id: 's-old', name: '设计稿', path: 'docs/design.md', description: '首页与详情页 2 版', staleSince: 0 },
+      ],
+      tasks: [{ id: 't-old', title: '引用旧资料的卡', refs: ['s-old'] }],
+      memory: [],
+    }],
+  })
+  const migratedV9 = testHelpers.parseProjects(v9Doc)
+  const v9References = migratedV9[0].references
+  check('v9 shared text becomes a note reference', v9References.length === 2 && v9References[0].kind === 'note', JSON.stringify(v9References))
+  check('the migrated note keeps the old text', v9References[0].name === '项目说明' && v9References[0].value === '先评审再实现', JSON.stringify(v9References[0]))
+  check('v9 shared entries become link references', v9References[1].kind === 'link' && v9References[1].id === 's-old' && v9References[1].value === 'docs/design.md', JSON.stringify(v9References[1]))
+  check('the v9 description survives', v9References[1].description === '首页与详情页 2 版', JSON.stringify(v9References[1]))
+  check('the card reference still points at the migrated entry', migratedV9[0].tasks[0].refs.length === 1 && migratedV9[0].tasks[0].refs[0] === 's-old', JSON.stringify(migratedV9[0].tasks[0].refs))
+  check('the legacy fields are dropped from memory', !('shared' in migratedV9[0]) && !('sharedEntries' in migratedV9[0]), JSON.stringify(Object.keys(migratedV9[0])))
+  const v10RoundTrip = testHelpers.parseProjects(testHelpers.serializeProjects(migratedV9))
+  check('migrating a v9 document twice does not duplicate', v10RoundTrip[0].references.length === 2, JSON.stringify(v10RoundTrip[0].references))
+  check('the migrated document writes version 10', JSON.parse(testHelpers.serializeProjects(migratedV9)).version === 10)
 
   /* ------------------------------------------------------ UI interaction */
 
   const settle = ms => new Promise(resolve => setTimeout(resolve, ms === undefined ? 320 : ms))
   const mount = async (options) => {
-    await settle(80)
+    // Let the previous mounted page flush and settle its pending queue first:
+    // its timer would otherwise fire after the fake Host was reset and write
+    // into the next test's fresh board.
+    await settle(600)
     storage.clear()
     instances.clear()
     resetHost()
@@ -593,9 +637,9 @@ const fakeCtx = {
   change(byAria('新建项目'), 'Alpha 项目')
   submit(formOf(byAria('新建项目')))
   let doc = stored()
-  check('document version 7', doc && doc.version === 7, doc && String(doc.version))
+  check('document version 10', doc && doc.version === 10, doc && String(doc.version))
   check('project created', doc && doc.projects.length === 1 && doc.projects[0].name === 'Alpha 项目')
-  check('shared text starts empty', doc && doc.projects[0].shared === '')
+  check('project starts with no references', doc && Array.isArray(doc.projects[0].references) && doc.projects[0].references.length === 0, doc && JSON.stringify(doc.projects[0]))
   check('detail pane shows the project', textOf().includes('Alpha 项目'))
 
   console.log('\n[7] subtask title derived from the description')
@@ -630,13 +674,63 @@ const fakeCtx = {
   doc = stored()
   check('note stored', doc && doc.projects[0].tasks[0].note === '等待评审排期')
 
-  console.log('\n[9] shared reference block')
-  const shared = byAria('共享资料')
-  check('shared textarea exists', !!shared, textOf().slice(0, 200))
-  change(shared, 'docs/spec.md\n约定：先评审再实现')
+  console.log('\n[9] project references block')
+  const kindSelect = byAria('类型')
+  check('one merged references block is rendered', !!kindSelect, textOf().slice(0, 200))
+  check('the block is titled project references', textOf().includes('项目资料'))
+  check('the old shared block is gone', !textOf().includes('共享资料'))
+  change(kindSelect, 'link')
+  change(byAria('名称'), '接口文档')
+  change(byAria('路径或链接'), 'docs/api.md')
+  change(byAria('说明（可选）'), '接口约定')
+  submit(formOf(byAria('名称')))
+  await settle()
   doc = stored()
-  check('shared text stored', doc && doc.projects[0].shared === 'docs/spec.md\n约定：先评审再实现', doc && JSON.stringify(doc.projects[0].shared))
-  check('shared text bound to the textarea', byAria('共享资料').props.value === 'docs/spec.md\n约定：先评审再实现')
+  let projectRefs = doc.projects[0].references
+  check('a link reference is stored', projectRefs.length === 1 && projectRefs[0].kind === 'link', JSON.stringify(projectRefs))
+  check('the reference name and value are stored', projectRefs[0].name === '接口文档' && projectRefs[0].value === 'docs/api.md', JSON.stringify(projectRefs[0]))
+  check('the reference description is stored', projectRefs[0].description === '接口约定', JSON.stringify(projectRefs[0]))
+  check('a fresh link is not stale', projectRefs[0].staleSince === 0)
+  check('the host stored the reference', hostState.board.projects[0].references.length === 1, JSON.stringify(hostState.board.projects[0].references))
+  check('the local document carries no legacy fields', !('shared' in doc.projects[0]) && !('sharedEntries' in doc.projects[0]), JSON.stringify(Object.keys(doc.projects[0])))
+
+  // A note uses a textarea: it is convention text and is never probed.
+  change(byAria('类型'), 'note')
+  const noteField = byAria('约定内容')
+  check('a note value uses a textarea', noteField !== null && noteField.type === 'textarea', noteField && String(noteField.type))
+  change(noteField, '先评审再实现')
+  change(byAria('名称'), '项目说明')
+  submit(formOf(byAria('名称')))
+  await settle()
+  doc = stored()
+  projectRefs = doc.projects[0].references
+  check('a note reference is stored', projectRefs.length === 2 && projectRefs[1].kind === 'note', JSON.stringify(projectRefs))
+  check('the note keeps its text', projectRefs[1].name === '项目说明' && projectRefs[1].value === '先评审再实现', JSON.stringify(projectRefs[1]))
+  check('a note is never stale', projectRefs[1].staleSince === 0)
+  check('the host stored both references', hostState.board.projects[0].references.length === 2, JSON.stringify(hostState.board.projects[0].references))
+  check('rows badge their kind', byClassName('dsh-board__chip').some(chip => childText(chip) === '链接') && byClassName('dsh-board__chip').some(chip => childText(chip) === '约定'), textOf().slice(0, 240))
+  check('reference rows carry values and descriptions', textOf().includes('docs/api.md') && textOf().includes('接口约定') && textOf().includes('先评审再实现'), textOf().slice(0, 240))
+  check('a reference row has a delete control', byAria('删除资料') !== null)
+
+  // The contract's row layout has no separate edit control, but the action
+  // surface still owns `updateReference`; drive it through the props the page
+  // hands the detail pane so the reference.update op is proven against the
+  // real Host rather than just declared.
+  const detailPane = findElement(element => element.props !== undefined
+    && element.props.project !== undefined
+    && element.props.actions !== undefined
+    && typeof element.props.actions.updateReference === 'function')
+  check('the detail pane exposes updateReference', !!detailPane)
+  const linkReferenceId = stored().projects[0].references[0].id
+  if (detailPane !== null) {
+    detailPane.props.actions.updateReference(linkReferenceId, { name: '接口文档（二版）', description: '更新后的说明' })
+  }
+  rerender()
+  await settle()
+  const updatedReference = stored().projects[0].references[0]
+  check('updateReference merges the patch locally', updatedReference.name === '接口文档（二版）' && updatedReference.description === '更新后的说明', JSON.stringify(updatedReference))
+  check('updateReference keeps the id, kind and value', updatedReference.id === linkReferenceId && updatedReference.kind === 'link' && updatedReference.value === 'docs/api.md', JSON.stringify(updatedReference))
+  check('the host accepted reference.update', hostState.board.projects[0].references[0].name === '接口文档（二版）', JSON.stringify(hostState.board.projects[0].references))
 
   console.log('\n[10] create a main Session for the subtask')
   const createButton = byButtonText('新建主会话')
@@ -705,14 +799,16 @@ const fakeCtx = {
   check('linked count chip rendered', textOf().includes('条记忆'), textOf().slice(0, 240))
 
   console.log('\n[15] deleting a subtask asks first, then keeps the project and clears its memory link')
-  click(byClassName('dsh-board__delete')[0])
+  // The card's own delete control: the references block renders delete buttons
+  // too, and those must not be mistaken for the card one.
+  click(byAria('删除子任务'))
   check('deleting a subtask asks for confirmation', hasConfirm())
   check('nothing was deleted before the answer', stored().projects[0].tasks.length === 1, String(stored().projects[0].tasks.length))
   confirmNow('删除')
   doc = stored()
   check('project survives', doc && doc.projects.length === 1)
   check('subtasks emptied', doc && doc.projects[0].tasks.length === 0)
-  check('shared text survives', doc && doc.projects[0].shared === 'docs/spec.md\n约定：先评审再实现')
+  check('references survive', doc && doc.projects[0].references.length === 2, doc && JSON.stringify(doc.projects[0].references))
   check('memory entry kept, link cleared', doc && doc.projects[0].memory.length === 1 && doc.projects[0].memory[0].taskId === '')
 
   console.log('\n[16] delete project (cancel, then confirm)')
@@ -734,11 +830,12 @@ const fakeCtx = {
 
   console.log('\n[18] panel writes reach the Host')
   await mount()
+  const revisionBefore = hostState.board.revision
   change(byAria('新建项目'), '同步项目')
   submit(formOf(byAria('新建项目')))
   await settle()
   check('project reached the host', hostState.board.projects.length === 1 && hostState.board.projects[0].name === '同步项目', JSON.stringify(hostState.board.projects.map(project => project.name)))
-  check('host revision advanced', hostState.board.revision === 1, String(hostState.board.revision))
+  check('host revision advanced once', hostState.board.revision === revisionBefore + 1, hostState.board.revision + ' vs ' + revisionBefore)
   change(byAria('任务描述（自动生成标题）'), '把结果写进宿主')
   submit(formOf(byAria('任务描述（自动生成标题）')))
   await settle()
@@ -749,17 +846,27 @@ const fakeCtx = {
   check('progress reached the host', hostState.board.projects[0].tasks[0].progress === 80, String(hostState.board.projects[0].tasks[0].progress))
   check('pill reports a synced board', textOf().includes('已同步'), textOf().slice(0, 160))
 
-  console.log('\n[19] a browser document seeds an empty Host once')
+  console.log('\n[19] a browser v9 document seeds an empty Host once')
   const legacyLocal = JSON.stringify({
-    version: 4,
-    projects: [{ id: 'p-local', name: '本地旧项目', shared: 'docs/x.md', tasks: [], memory: [] }],
+    version: 9,
+    projects: [{
+      id: 'p-local',
+      name: '本地旧项目',
+      shared: 'docs/x.md',
+      sharedEntries: [{ id: 's-local', name: '旧链接', path: 'legacy/site.zip', description: '', staleSince: 0 }],
+      tasks: [],
+      memory: [],
+    }],
   })
   await mount({ seedLocal: legacyLocal })
   await settle(460)
   check('host imported the local project', hostState.board.projects.length === 1 && hostState.board.projects[0].name === '本地旧项目', JSON.stringify(hostState.board.projects.map(project => project.name)))
   check('the browser document was backed up', storage.has('dsh.greenlight.v1.backup'))
-  check('shared text survived the import', hostState.board.projects[0].shared === 'docs/x.md')
-  check('the mirror now matches the host', stored().projects[0].name === '本地旧项目')
+  const importedRefs = hostState.board.projects[0].references
+  check('the v9 shared text became a note reference', importedRefs.length === 2 && importedRefs[0].kind === 'note' && importedRefs[0].value === 'docs/x.md', JSON.stringify(importedRefs))
+  check('the v9 entry became a link reference', importedRefs[1].kind === 'link' && importedRefs[1].value === 'legacy/site.zip', JSON.stringify(importedRefs[1]))
+  check('the mirror now carries references', stored().projects[0].references.length === 2, JSON.stringify(stored().projects[0].references))
+  check('the mirror matches the host', stored().projects[0].name === '本地旧项目')
 
   console.log('\n[20] a stale revision is rebased against the Host')
   await mount()
@@ -792,11 +899,17 @@ const fakeCtx = {
   check('tone follows the column', testHelpers.taskToneOf({ status: 'done', blocked: false }) === 'green' && testHelpers.taskToneOf({ status: 'failed', blocked: false }) === 'red' && testHelpers.taskToneOf({ status: 'review', blocked: false }) === 'yellow')
   const promptSample = testHelpers.buildDispatchPrompt(
     { id: 't', title: '标题A', note: '说明B', sessionId: 's' },
-    { shared: '共享C', memory: [{ id: 'm', text: '记忆D', taskId: 't' }] },
+    {
+      references: [
+        { id: 'r-note', kind: 'note', name: '约定', value: '共享C', description: '', staleSince: 0 },
+        { id: 'r-link', kind: 'link', name: '文档', value: 'docs/spec.md', description: '', staleSince: 0 },
+      ],
+      memory: [{ id: 'm', text: '记忆D', taskId: 't' }],
+    },
   )
-  check('dispatch prompt carries title, note, shared text and linked memory',
-    promptSample.includes('标题A') && promptSample.includes('说明B') && promptSample.includes('共享C') && promptSample.includes('记忆D'),
-    promptSample.slice(0, 120))
+  check('dispatch prompt carries title, note, references and linked memory',
+    promptSample.includes('标题A') && promptSample.includes('说明B') && promptSample.includes('共享C') && promptSample.includes('docs/spec.md') && promptSample.includes('记忆D'),
+    promptSample.slice(0, 160))
 
   await mount()
   change(byAria('新建项目'), 'B 批次项目')
@@ -966,23 +1079,23 @@ const fakeCtx = {
   check('tags stored', JSON.stringify(cd.tags) === JSON.stringify(['后端', '联调']), JSON.stringify(cd.tags))
   check('host received the new fields', hostState.board.projects[0].tasks[0].priority === 'high' && hostState.board.projects[0].tasks[0].dueDate === '2026-12-31', JSON.stringify(hostState.board.projects[0].tasks[0]))
 
-  console.log('\n[32] batch C5: shared reference entries and subtask references')
+  console.log('\n[32] batch C5: project references and subtask references')
   change(byAria('名称'), '接口文档')
   change(byAria('路径或链接'), 'docs/api.md')
   submit(formOf(byAria('名称')))
   await settle()
-  const sharedEntries = stored().projects[0].sharedEntries
-  check('shared entry stored', sharedEntries.length === 1 && sharedEntries[0].name === '接口文档', JSON.stringify(sharedEntries))
-  check('host stored the shared entry', hostState.board.projects[0].sharedEntries.length === 1)
-  check('entry path stored', sharedEntries[0].path === 'docs/api.md', sharedEntries[0].path)
-  const removeShared = byAria('删除资料')
-  check('shared entry has a delete control', !!removeShared)
-  click(removeShared)
+  const references = stored().projects[0].references
+  check('a link reference is stored', references.length === 1 && references[0].name === '接口文档', JSON.stringify(references))
+  check('host stored the reference', hostState.board.projects[0].references.length === 1)
+  check('the reference value is stored', references[0].value === 'docs/api.md', references[0].value)
+  const removeReferenceControl = byAria('删除资料')
+  check('a reference row has a delete control', !!removeReferenceControl)
+  click(removeReferenceControl)
   check('deleting a reference asks first', hasConfirm())
   confirmNow('删除')
   await settle()
-  check('shared entry removed locally', stored().projects[0].sharedEntries.length === 0)
-  check('shared entry removed on the host', hostState.board.projects[0].sharedEntries.length === 0)
+  check('the reference is removed locally', stored().projects[0].references.length === 0)
+  check('the reference is removed on the host', hostState.board.projects[0].references.length === 0)
 
   console.log('\n[33] batch C4: trash restore and purge')
   const trashedTaskTitle = stored().projects[0].tasks[0].title
@@ -1037,11 +1150,13 @@ const fakeCtx = {
   submit(formOf(byAria('名称')))
   await settle()
   const refChip = byButtonText('接口文档')
-  check('shared entry renders as a reference chip', !!refChip, textOf().slice(0, 220))
+  check('a reference renders as a reference chip', !!refChip, textOf().slice(0, 220))
   click(refChip)
   await settle()
   const taskWithRef = stored().projects[0].tasks[0]
+  const chipReferenceId = stored().projects[0].references[0].id
   check('clicking the chip adds the reference', taskWithRef.refs.length === 1, JSON.stringify(taskWithRef.refs))
+  check('the chip points at the project reference', taskWithRef.refs[0] === chipReferenceId, JSON.stringify(taskWithRef.refs))
   check('host received the reference', hostState.board.projects[0].tasks[0].refs.length === 1, JSON.stringify(hostState.board.projects[0].tasks[0].refs))
   click(byButtonText('接口文档'))
   await settle()
@@ -1142,15 +1257,14 @@ const fakeCtx = {
 
 console.log('\n[38] automatic acceptance: presentation and the mode switch')
   const acceptanceSeed = {
-    version: 8,
+    version: 10,
     revision: 5,
     updatedAt: new Date().toISOString(),
     projects: [{
       id: 'p-acc',
       name: '验收项目',
       acceptanceMode: 'auto',
-      shared: '',
-      sharedEntries: [],
+      references: [],
       memory: [],
       trash: [],
       tasks: [
@@ -1192,7 +1306,7 @@ console.log('\n[38] automatic acceptance: presentation and the mode switch')
 
   console.log('\n[39] acceptance rules, deliverable verification and the project root')
   const ruleSeed = {
-    version: 8,
+    version: 10,
     revision: 9,
     updatedAt: new Date().toISOString(),
     projects: [{
@@ -1201,8 +1315,7 @@ console.log('\n[38] automatic acceptance: presentation and the mode switch')
       acceptanceMode: 'auto',
       acceptanceRules: { requireEvidence: true, requireDeliverables: false, verifyDeliverables: true, requireSession: false },
       rootDir: '',
-      shared: '',
-      sharedEntries: [],
+      references: [],
       memory: [],
       trash: [],
       tasks: [
@@ -1243,8 +1356,8 @@ console.log('\n[38] automatic acceptance: presentation and the mode switch')
   check('root directory reached the host', hostState.board.projects[0].rootDir === 'D:/repo', hostState.board.projects[0].rootDir)
 
 console.log('\n[40] claims, layers, next action, debt and the audit trail')
-  const v9Seed = {
-    version: 9,
+  const disciplineSeed = {
+    version: 10,
     revision: 11,
     updatedAt: new Date().toISOString(),
     projects: [{
@@ -1257,8 +1370,7 @@ console.log('\n[40] claims, layers, next action, debt and the audit trail')
       anchor: { digest: '做一个 X', decisions: [{ title: '用 A', reason: '更简单', source: '' }], risks: ['未测 WSL'], deviations: [], updatedAt: Date.now() },
       lastCheckAt: 0,
       rootDir: '',
-      shared: '',
-      sharedEntries: [{ id: 's-stale', name: '旧文档', path: 'docs/gone.md', description: '', staleSince: Date.now(), createdAt: Date.now() }],
+      references: [{ id: 's-stale', kind: 'link', name: '旧文档', value: 'docs/gone.md', description: '', staleSince: Date.now() }],
       memory: [],
       trash: [],
       tasks: [{
@@ -1284,7 +1396,7 @@ console.log('\n[40] claims, layers, next action, debt and the audit trail')
       }],
     }],
   }
-  await mount({ seedHost: v9Seed })
+  await mount({ seedHost: disciplineSeed })
   await settle(400)
 
   const nextField = byAria('下一步')
@@ -1310,7 +1422,7 @@ console.log('\n[40] claims, layers, next action, debt and the audit trail')
 
 console.log('\n[41] the claim form and the archive')
   const claimSeed = {
-    version: 9,
+    version: 10,
     revision: 21,
     updatedAt: new Date().toISOString(),
     projects: [{
@@ -1323,8 +1435,7 @@ console.log('\n[41] the claim form and the archive')
       anchor: { digest: '', decisions: [], risks: [], deviations: [], updatedAt: 0 },
       lastCheckAt: 0,
       rootDir: '',
-      shared: '',
-      sharedEntries: [],
+      references: [],
       memory: [],
       trash: [],
       tasks: [{
@@ -1388,7 +1499,7 @@ console.log('\n[41] the claim form and the archive')
 
 console.log('\n[42] every destructive action is confirmed')
   const guardSeed = {
-    version: 9,
+    version: 10,
     revision: 31,
     updatedAt: new Date().toISOString(),
     projects: [{
@@ -1401,8 +1512,7 @@ console.log('\n[42] every destructive action is confirmed')
       anchor: { digest: '', decisions: [], risks: [], deviations: [], updatedAt: 0 },
       lastCheckAt: 0,
       rootDir: '',
-      shared: '',
-      sharedEntries: [{ id: 'r1', name: '要删的引用', path: 'docs/x.md', description: '', staleSince: 0, createdAt: Date.now() }],
+      references: [{ id: 'r1', kind: 'link', name: '要删的引用', value: 'docs/x.md', description: '', staleSince: 0 }],
       memory: [{ id: 'm1', text: '要删的记忆', taskId: '', createdAt: Date.now() }],
       trash: [],
       tasks: [{
@@ -1442,23 +1552,23 @@ console.log('\n[42] every destructive action is confirmed')
   click(byAria('删除资料'))
   check('deleting a reference asks', hasConfirm())
   cancelConfirm()
-  check('the reference survives a cancel', stored().projects[0].sharedEntries.length === 1)
+  check('the reference survives a cancel', stored().projects[0].references.length === 1)
   click(byAria('删除记忆'))
   check('deleting memory asks', hasConfirm())
   cancelConfirm()
   check('the memory entry survives a cancel', stored().projects[0].memory.length === 1)
 
   // Nothing was written to the Host while all of that was cancelled.
-  check('cancelled actions wrote nothing', hostState.board.projects[0].sharedEntries.length === 1 && hostState.board.projects[0].memory.length === 1, JSON.stringify({ shared: hostState.board.projects[0].sharedEntries.length, memory: hostState.board.projects[0].memory.length }))
+  check('cancelled actions wrote nothing', hostState.board.projects[0].references.length === 1 && hostState.board.projects[0].memory.length === 1, JSON.stringify({ references: hostState.board.projects[0].references.length, memory: hostState.board.projects[0].memory.length }))
 
 console.log('\n[43] the project rail collapses and remembers it')
   const railSeed = {
-    version: 9,
+    version: 10,
     revision: 41,
     updatedAt: new Date().toISOString(),
     projects: [
-      { id: 'pa', name: '甲项目', acceptanceMode: 'auto', acceptanceRules: {}, requiredLayers: [], gates: {}, anchor: {}, sharedEntries: [], memory: [], trash: [], tasks: [] },
-      { id: 'pb', name: '乙项目', acceptanceMode: 'auto', acceptanceRules: {}, requiredLayers: [], gates: {}, anchor: {}, sharedEntries: [], memory: [], trash: [], tasks: [] },
+      { id: 'pa', name: '甲项目', acceptanceMode: 'auto', acceptanceRules: {}, requiredLayers: [], gates: {}, anchor: {}, references: [], memory: [], trash: [], tasks: [] },
+      { id: 'pb', name: '乙项目', acceptanceMode: 'auto', acceptanceRules: {}, requiredLayers: [], gates: {}, anchor: {}, references: [], memory: [], trash: [], tasks: [] },
     ],
   }
   await mount({ seedHost: railSeed })
@@ -1488,6 +1598,17 @@ console.log('\n[43] the project rail collapses and remembers it')
   check('expanding is remembered', storage.get('dsh.greenlight.railCollapsed') === '0', String(storage.get('dsh.greenlight.railCollapsed')))
   check('the control is still the only one', railButtons().length === 1, String(railButtons().length))
   check('project names come back', textOf().includes('甲项目') && textOf().includes('乙项目'))
+
+console.log('\n[44] the client only writes the version-10 reference operations')
+  check('the local mirror stores references, never the legacy fields',
+    stored().projects.every(project => Array.isArray(project.references) && !('shared' in project) && !('sharedEntries' in project)),
+    JSON.stringify(Object.keys(stored().projects[0])))
+  check('no legacy shared operation was sent',
+    !sentOps.some(op => op.type === 'project.setShared' || String(op.type).startsWith('sharedEntry.')),
+    JSON.stringify([...new Set(sentOps.map(op => op.type))]))
+  check('references are written through the version-10 operations',
+    ['reference.add', 'reference.update', 'reference.remove'].every(type => sentOps.some(op => op.type === type)),
+    JSON.stringify([...new Set(sentOps.map(op => op.type))]))
 
   console.log('\n' + (failures === 0 ? 'ALL ' + checks + ' CHECKS PASSED' : failures + ' of ' + checks + ' CHECKS FAILED'))
   process.exit(failures === 0 ? 0 : 1)

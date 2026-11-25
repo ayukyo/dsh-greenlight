@@ -14,10 +14,14 @@
  *   8 (automatic acceptance: a completed card is verified first and only lands
  *      in `review` when it cannot be verified, or when the project or the card
  *      asks for a human)
+ *   9 (verified claims, column gates, cold storage, decision anchor)
+ *  10 (one typed `references` list replaces the `shared` text and the
+ *      `sharedEntries` list; `link` references are re-checked, `note` ones are
+ *      convention text that is never probed)
  */
 
 /** Version written by this module. */
-export const DOC_VERSION = 9
+export const DOC_VERSION = 10
 
 /** Subtask columns, in board order. */
 export const TASK_STATUSES = ['backlog', 'todo', 'running', 'review', 'done', 'failed']
@@ -97,8 +101,14 @@ function isHumanOrigin(origin) {
 
 /** Longest accepted title / name. */
 export const MAX_TITLE_LENGTH = 200
-/** Longest accepted shared reference text. */
+/** Longest accepted free text: a note reference, or the anchor digest. */
 export const MAX_SHARED_LENGTH = 20000
+/** Longest accepted link value: a path or URL. */
+export const MAX_LINK_LENGTH = 1000
+/** Kinds a project reference can have. */
+export const REFERENCE_KINDS = ['link', 'note']
+/** Name the legacy `project.shared` text is carried over under. */
+const LEGACY_SHARED_NAME = '项目说明'
 /** Longest accepted note text. */
 export const MAX_NOTE_LENGTH = 8000
 /** Longest accepted memory entry. */
@@ -449,7 +459,7 @@ function asTags(value) {
 }
 
 /**
- * Keep a string list of shared-entry references, bounded.
+ * Keep a string list of reference ids, bounded.
  * @param value - candidate list.
  * @returns the normalized ids.
  */
@@ -483,6 +493,25 @@ function asDueDate(value) {
  */
 export function emptyBoard() {
   return { version: DOC_VERSION, revision: 0, updatedAt: nowIso(), projects: [] }
+}
+
+/**
+ * @returns a project record with every field at its empty value.
+ */
+function emptyProject() {
+  return {
+    acceptanceMode: 'auto',
+    acceptanceRules: asAcceptanceRules({}),
+    requiredLayers: [],
+    gates: asGates({}),
+    anchor: asAnchor({}),
+    rootDir: '',
+    references: [],
+    tasks: [],
+    memory: [],
+    trash: [],
+    createdAt: Date.now(),
+  }
 }
 
 /**
@@ -549,23 +578,52 @@ function normalizeMemory(raw) {
 }
 
 /**
- * Normalize one shared-reference entry: a named document path or link that
- * every subtask of the project may point at.
- * @param raw - candidate entry.
- * @returns a normalized entry, or null when unusable.
+ * Normalize one project reference: a `link` (a path or URL that is re-checked
+ * and that cards may point at) or a `note` (convention text that is never
+ * probed).
+ * @param raw - candidate reference.
+ * @returns a normalized reference, or null when unusable.
  */
-function normalizeSharedEntry(raw) {
+function normalizeReference(raw) {
+  if (!isRecord(raw)) return null
+  const name = asString(raw.name).trim()
+  if (name === '') return null
+  const kind = raw.kind === 'note' ? 'note' : 'link'
+  return {
+    id: typeof raw.id === 'string' && raw.id !== '' ? raw.id : createId('ref-'),
+    kind,
+    name: bounded(name, MAX_TITLE_LENGTH),
+    value: kind === 'link'
+      ? bounded(asString(raw.value).trim(), MAX_LINK_LENGTH)
+      : bounded(asString(raw.value), MAX_SHARED_LENGTH),
+    description: bounded(asString(raw.description).trim(), MAX_NOTE_LENGTH),
+    // Only a link can be stale: a note is text and has no path to lose.
+    staleSince: kind === 'link'
+      && typeof raw.staleSince === 'number' && Number.isFinite(raw.staleSince) && raw.staleSince > 0
+      ? raw.staleSince
+      : 0,
+  }
+}
+
+/**
+ * Carry one version-9 shared entry over as a link reference.
+ * @param raw - legacy entry.
+ * @returns a normalized reference, or null when unusable.
+ */
+function normalizeLegacySharedEntry(raw) {
   if (!isRecord(raw)) return null
   const name = asString(raw.name).trim()
   if (name === '') return null
   return {
-    id: typeof raw.id === 'string' && raw.id !== '' ? raw.id : createId('s'),
+    // The entry id is kept: cards already point at it through `task.refs`.
+    id: typeof raw.id === 'string' && raw.id !== '' ? raw.id : createId('ref-'),
+    kind: 'link',
     name: bounded(name, MAX_TITLE_LENGTH),
-    path: bounded(asString(raw.path).trim(), 1000),
+    value: bounded(asString(raw.path).trim(), MAX_LINK_LENGTH),
     description: bounded(asString(raw.description).trim(), MAX_NOTE_LENGTH),
-    // Set when the last recheck could not find the path; 0 means it resolved.
-    staleSince: typeof raw.staleSince === 'number' && Number.isFinite(raw.staleSince) ? raw.staleSince : 0,
-    createdAt: typeof raw.createdAt === 'number' && Number.isFinite(raw.createdAt) ? raw.createdAt : Date.now(),
+    staleSince: typeof raw.staleSince === 'number' && Number.isFinite(raw.staleSince) && raw.staleSince > 0
+      ? raw.staleSince
+      : 0,
   }
 }
 
@@ -613,15 +671,40 @@ function normalizeProject(raw) {
   for (const entry of memory) {
     if (entry.taskId !== '' && !known.has(entry.taskId)) entry.taskId = ''
   }
-  const sharedEntries = []
-  const sharedSource = Array.isArray(raw.sharedEntries) ? raw.sharedEntries : []
-  for (const candidate of sharedSource) {
-    const entry = normalizeSharedEntry(candidate)
-    if (entry !== null) sharedEntries.push(entry)
+  // Version 9 kept project material in two fields: a free-text `shared` block
+  // and a `sharedEntries` list of named paths. Version 10 folds both into one
+  // typed list, so a stored v9 document is migrated here, in memory, before
+  // anything reads it; the legacy fields are dropped from what gets written.
+  const references = []
+  for (const candidate of Array.isArray(raw.references) ? raw.references : []) {
+    const reference = normalizeReference(candidate)
+    if (reference !== null) references.push(reference)
   }
-  const sharedIds = new Set(sharedEntries.map(entry => entry.id))
+  const shared = asString(raw.shared)
+  if (shared.trim() !== '') {
+    // The old free text becomes a note, kept first: that is where it was read.
+    references.unshift({
+      id: createId('ref-'),
+      kind: 'note',
+      name: LEGACY_SHARED_NAME,
+      value: bounded(shared, MAX_SHARED_LENGTH),
+      description: '',
+      staleSince: 0,
+    })
+  }
+  for (const candidate of Array.isArray(raw.sharedEntries) ? raw.sharedEntries : []) {
+    const reference = normalizeLegacySharedEntry(candidate)
+    if (reference !== null) references.push(reference)
+  }
+  // A hand-edited document may repeat an id; the first one keeps it so the
+  // cards that already point at it stay valid.
+  const knownReferences = new Set()
+  for (const reference of references) {
+    while (knownReferences.has(reference.id)) reference.id = createId('ref-')
+    knownReferences.add(reference.id)
+  }
   for (const task of tasks) {
-    task.refs = task.refs.filter(ref => sharedIds.has(ref))
+    task.refs = task.refs.filter(ref => knownReferences.has(ref))
   }
   const trash = []
   const trashSource = Array.isArray(raw.trash) ? raw.trash : []
@@ -642,8 +725,7 @@ function normalizeProject(raw) {
     anchor: asAnchor(raw.anchor),
     lastCheckAt: typeof raw.lastCheckAt === 'number' && Number.isFinite(raw.lastCheckAt) ? raw.lastCheckAt : 0,
     rootDir: bounded(asString(raw.rootDir).trim(), MAX_ROOT_LENGTH),
-    shared: bounded(asString(raw.shared), MAX_SHARED_LENGTH),
-    sharedEntries,
+    references,
     tasks,
     memory,
     trash,
@@ -701,17 +783,8 @@ function migrateV1(list) {
   return [{
     id: createId('p'),
     name: '默认项目',
-    acceptanceMode: 'auto',
-    acceptanceRules: asAcceptanceRules({}),
-    requiredLayers: [],
-    gates: asGates({}),
-    anchor: asAnchor({}),
-    shared: '',
-    sharedEntries: [],
+    ...emptyProject(),
     tasks,
-    memory: [],
-    trash: [],
-    createdAt: Date.now(),
   }]
 }
 
@@ -1084,6 +1157,119 @@ function applyTaskPatch(task, patch) {
   return null
 }
 
+/* --------------------------------------------------------------- references */
+
+/**
+ * Find one reference inside a project.
+ * @param project - project to search.
+ * @param referenceId - reference identity.
+ * @returns the reference, or undefined.
+ */
+function findReference(project, referenceId) {
+  return project.references.find(entry => entry.id === referenceId)
+}
+
+/**
+ * Append one reference to a project.
+ *
+ * The two kinds are validated differently on purpose: a link must carry a path
+ * or URL, because that is what the stale sweep probes; a note is free text and
+ * has nothing to resolve.
+ *
+ * @param project - project to mutate.
+ * @param op - `{ id?, kind, name, value, description? }`.
+ * @returns null on success, or an error code.
+ */
+function addReference(project, op) {
+  if (project === undefined) return 'unknown_project'
+  if (!REFERENCE_KINDS.includes(op.kind)) return 'invalid_field'
+  const name = typeof op.name === 'string' ? op.name.trim() : ''
+  if (name === '') return 'invalid_field'
+  if (typeof op.value !== 'string') return 'invalid_field'
+  if (op.description !== undefined && typeof op.description !== 'string') return 'invalid_field'
+  const kind = op.kind
+  const raw = kind === 'link' ? op.value.trim() : op.value
+  if (kind === 'link' && raw === '') return 'invalid_field'
+  const id = typeof op.id === 'string' && op.id !== '' ? op.id : createId('ref-')
+  if (findReference(project, id) !== undefined) return 'duplicate_id'
+  project.references.push({
+    id,
+    kind,
+    name: bounded(name, MAX_TITLE_LENGTH),
+    value: kind === 'link' ? bounded(raw, MAX_LINK_LENGTH) : bounded(raw, MAX_SHARED_LENGTH),
+    description: bounded(asString(op.description).trim(), MAX_NOTE_LENGTH),
+    // Set when the last recheck could not find the target; 0 means it resolved.
+    staleSince: 0,
+  })
+  return null
+}
+
+/** Reference fields a patch may touch; the id is deliberately not one. */
+const PATCHABLE_REFERENCE_FIELDS = ['kind', 'name', 'value', 'description']
+
+/**
+ * Merge one patch into a reference.
+ * @param project - project holding it.
+ * @param op - `{ referenceId, patch }`.
+ * @returns null on success, or an error code.
+ */
+function updateReference(project, op) {
+  if (project === undefined) return 'unknown_project'
+  const entry = typeof op.referenceId === 'string' ? findReference(project, op.referenceId) : undefined
+  if (entry === undefined) return 'unknown_reference'
+  if (!isRecord(op.patch)) return 'invalid_field'
+  for (const key of Object.keys(op.patch)) {
+    if (!PATCHABLE_REFERENCE_FIELDS.includes(key)) return 'invalid_field'
+  }
+  // The merged result is validated before the entry is touched, so a refused
+  // patch leaves the reference exactly as it was.
+  const kind = 'kind' in op.patch ? op.patch.kind : entry.kind
+  if (!REFERENCE_KINDS.includes(kind)) return 'invalid_field'
+  let name = entry.name
+  if ('name' in op.patch) {
+    if (typeof op.patch.name !== 'string' || op.patch.name.trim() === '') return 'invalid_field'
+    name = bounded(op.patch.name.trim(), MAX_TITLE_LENGTH)
+  }
+  let value = entry.value
+  if ('value' in op.patch) {
+    if (typeof op.patch.value !== 'string') return 'invalid_field'
+    value = kind === 'link' ? op.patch.value.trim() : op.patch.value
+  }
+  // Switching a note to a link needs something to probe; switching a link to a
+  // note keeps the old text, which is still readable.
+  if (kind === 'link' && value.trim() === '') return 'invalid_field'
+  value = bounded(value, kind === 'link' ? MAX_LINK_LENGTH : MAX_SHARED_LENGTH)
+  let description = entry.description
+  if ('description' in op.patch) {
+    if (typeof op.patch.description !== 'string') return 'invalid_field'
+    description = bounded(op.patch.description.trim(), MAX_NOTE_LENGTH)
+  }
+  entry.kind = kind
+  entry.name = name
+  entry.value = value
+  entry.description = description
+  // A note has no path to lose, so it can never be stale.
+  if (kind === 'note') entry.staleSince = 0
+  return null
+}
+
+/**
+ * Remove one reference, dropping the card links that pointed at it.
+ * @param project - project to mutate.
+ * @param referenceId - reference identity.
+ * @returns null on success; removing a missing reference is a no-op.
+ */
+function removeReference(project, referenceId) {
+  if (project === undefined) return 'unknown_project'
+  const before = project.references.length
+  project.references = project.references.filter(entry => entry.id !== referenceId)
+  if (project.references.length === before) return null
+  for (const task of project.tasks) {
+    task.refs = task.refs.filter(ref => ref !== referenceId)
+  }
+  return null
+}
+
 /**
  * Apply one operation to a board in place.
  *
@@ -1106,18 +1292,13 @@ export function applyOp(board, op, origin) {
       board.projects.push({
         id,
         name: bounded(op.name, MAX_TITLE_LENGTH),
+        ...emptyProject(),
         acceptanceMode: asAcceptanceMode(op.acceptanceMode),
         acceptanceRules: asAcceptanceRules(op.acceptanceRules),
         requiredLayers: asRequiredLayers(op.requiredLayers),
         gates: asGates(op.gates),
         anchor: asAnchor(op.anchor),
         rootDir: bounded(asString(op.rootDir).trim(), MAX_ROOT_LENGTH),
-        shared: '',
-        sharedEntries: [],
-        tasks: [],
-        memory: [],
-        trash: [],
-        createdAt: Date.now(),
       })
       return null
     }
@@ -1156,10 +1337,21 @@ export function applyOp(board, op, origin) {
       return null
     }
     case 'project.setShared': {
+      // Compatibility: a version-9 client still sends the free-text block. It is
+      // kept as the one note named 项目说明, and empty text removes that note.
       if (project === undefined) return 'unknown_project'
       if (typeof op.shared !== 'string') return 'invalid_field'
-      project.shared = bounded(op.shared, MAX_SHARED_LENGTH)
-      return null
+      const shared = bounded(op.shared, MAX_SHARED_LENGTH)
+      const existing = project.references.find(entry => entry.kind === 'note' && entry.name === LEGACY_SHARED_NAME)
+      if (shared.trim() === '') {
+        if (existing === undefined) return null
+        return removeReference(project, existing.id)
+      }
+      if (existing !== undefined) {
+        existing.value = shared
+        return null
+      }
+      return addReference(project, { kind: 'note', name: LEGACY_SHARED_NAME, value: shared })
     }
     case 'project.remove': {
       if (project === undefined) return null
@@ -1298,10 +1490,15 @@ export function applyOp(board, op, origin) {
       const stale = Array.isArray(op.staleEntries) ? op.staleEntries : []
       const staleIds = new Set(stale.filter(id => typeof id === 'string'))
       const at = Date.now()
-      for (const entry of project.sharedEntries) {
+      for (const entry of project.references) {
+        // Only a link is probed; a note is text and is never stale.
+        if (entry.kind !== 'link') {
+          entry.staleSince = 0
+          continue
+        }
         if (staleIds.has(entry.id)) {
           if (entry.staleSince === 0) entry.staleSince = at
-        } else if (entry.path !== '') {
+        } else if (entry.value !== '') {
           entry.staleSince = 0
         }
       }
@@ -1388,43 +1585,38 @@ export function applyOp(board, op, origin) {
         : project.trash.filter(entry => entry.deletedAt >= cutoff)
       return null
     }
-    case 'sharedEntry.add': {
-      if (project === undefined) return 'unknown_project'
-      if (typeof op.name !== 'string' || op.name.trim() === '') return 'invalid_field'
-      const id = typeof op.id === 'string' && op.id !== '' ? op.id : createId('s')
-      if (project.sharedEntries.some(entry => entry.id === id)) return 'duplicate_id'
-      project.sharedEntries.push({
-        id,
-        name: bounded(op.name.trim(), MAX_TITLE_LENGTH),
-        path: bounded(asString(op.path).trim(), 1000),
-        description: bounded(asString(op.description).trim(), MAX_NOTE_LENGTH),
-        staleSince: 0,
-        createdAt: Date.now(),
-      })
-      return null
+    case 'reference.add': {
+      return addReference(project, op)
     }
-    case 'sharedEntry.patch': {
-      if (project === undefined) return 'unknown_project'
-      const entry = project.sharedEntries.find(candidate => candidate.id === op.entryId)
-      if (entry === undefined) return 'unknown_entry'
-      if ('name' in op) {
-        if (typeof op.name !== 'string' || op.name.trim() === '') return 'invalid_field'
-        entry.name = bounded(op.name.trim(), MAX_TITLE_LENGTH)
-      }
-      if ('path' in op) entry.path = bounded(asString(op.path).trim(), 1000)
-      if ('description' in op) entry.description = bounded(asString(op.description).trim(), MAX_NOTE_LENGTH)
-      return null
+    case 'reference.update': {
+      return updateReference(project, op)
+    }
+    case 'reference.remove': {
+      return removeReference(project, op.referenceId)
+    }
+    // Compatibility aliases: the version-9 entry operations still work, they
+    // just describe a `link` reference now, and `path` is called `value`.
+    case 'sharedEntry.add': {
+      return addReference(project, {
+        id: op.id,
+        kind: 'link',
+        name: op.name,
+        value: op.path === undefined ? '' : op.path,
+        description: op.description,
+      })
+    }
+    // The old name of the entry patch is `sharedEntry.patch`; the contract also
+    // spells it `sharedEntry.update`, so both are accepted.
+    case 'sharedEntry.patch':
+    case 'sharedEntry.update': {
+      const patch = {}
+      if ('name' in op) patch.name = op.name
+      if ('path' in op) patch.value = op.path
+      if ('description' in op) patch.description = op.description
+      return updateReference(project, { referenceId: op.entryId, patch })
     }
     case 'sharedEntry.remove': {
-      if (project === undefined) return 'unknown_project'
-      const before = project.sharedEntries.length
-      project.sharedEntries = project.sharedEntries.filter(entry => entry.id !== op.entryId)
-      if (project.sharedEntries.length === before) return null
-      // References to the removed entry are dropped from every subtask.
-      for (const task of project.tasks) {
-        task.refs = task.refs.filter(ref => ref !== op.entryId)
-      }
-      return null
+      return removeReference(project, op.entryId)
     }
     case 'board.replace': {
       if (!isRecord(op.document)) return 'invalid_field'

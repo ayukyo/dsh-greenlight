@@ -1,5 +1,5 @@
 /**
- * Schema v7 features: priority, due date, tags, structured shared entries,
+ * Schema v7 features: priority, due date, tags, structured references,
  * trash restore/purge and whole-board replacement.
  * Run with: node --test host/test
  */
@@ -88,23 +88,42 @@ test('expired trash is dropped when a document is loaded', () => {
   assert.equal(reloaded.projects[0].trash.length, 0, 'stale trash never accumulates on disk')
 })
 
-test('shared entries can be added, patched, referenced and removed', () => {
+test('references can be added, patched, referenced and removed', () => {
   const board = seed()
-  assert.equal(applyOp(board, { type: 'sharedEntry.add', projectId: 'p', id: 's1', name: '接口文档', path: 'docs/api.md', description: 'v2 协议' }), null)
-  assert.equal(applyOp(board, { type: 'sharedEntry.add', projectId: 'p', id: 's1', name: '重复' }), 'duplicate_id')
-  assert.equal(applyOp(board, { type: 'sharedEntry.add', projectId: 'p', name: '   ' }), 'invalid_field')
-  assert.equal(board.projects[0].sharedEntries.length, 1)
+  assert.equal(applyOp(board, { type: 'reference.add', projectId: 'p', id: 's1', kind: 'link', name: '接口文档', value: 'docs/api.md', description: 'v2 协议' }), null)
+  assert.equal(applyOp(board, { type: 'reference.add', projectId: 'p', id: 's1', kind: 'link', name: '重复', value: 'x' }), 'duplicate_id')
+  assert.equal(applyOp(board, { type: 'reference.add', projectId: 'p', kind: 'link', name: '   ', value: 'x' }), 'invalid_field')
+  assert.equal(applyOp(board, { type: 'reference.add', projectId: 'p', kind: 'link', name: '没路径' }), 'invalid_field', 'a link needs a value')
+  assert.equal(applyOp(board, { type: 'reference.add', projectId: 'p', kind: 'note', name: '约定', value: '先评审' }), null)
+  assert.equal(board.projects[0].references.length, 2)
+  assert.match(board.projects[0].references[1].id, /^ref-/, 'a missing id is generated')
 
   assert.equal(applyOp(board, { type: 'task.patch', projectId: 'p', taskId: 't', patch: { refs: ['s1', 'missing'] } }), null)
   assert.deepEqual(board.projects[0].tasks[0].refs, ['s1', 'missing'], 'refs are stored as given')
 
-  assert.equal(applyOp(board, { type: 'sharedEntry.patch', projectId: 'p', entryId: 's1', path: 'docs/api-v2.md' }), null)
-  assert.equal(board.projects[0].sharedEntries[0].path, 'docs/api-v2.md')
-  assert.equal(applyOp(board, { type: 'sharedEntry.patch', projectId: 'p', entryId: 'nope', path: 'x' }), 'unknown_entry')
+  assert.equal(applyOp(board, { type: 'reference.update', projectId: 'p', referenceId: 's1', patch: { value: 'docs/api-v2.md' } }), null)
+  assert.equal(board.projects[0].references[0].value, 'docs/api-v2.md')
+  assert.equal(applyOp(board, { type: 'reference.update', projectId: 'p', referenceId: 'nope', patch: { name: 'x' } }), 'unknown_reference')
+  assert.equal(applyOp(board, { type: 'reference.update', projectId: 'p', referenceId: 's1', patch: { id: 's2' } }), 'invalid_field', 'the id is not patchable')
+  assert.equal(applyOp(board, { type: 'reference.update', projectId: 'p', referenceId: 's1', patch: { kind: 'note' } }), null)
+  assert.equal(board.projects[0].references[0].kind, 'note')
+  assert.equal(applyOp(board, { type: 'reference.update', projectId: 'p', referenceId: 's1', patch: { kind: 'link', value: '' } }), 'invalid_field', 'a link needs a value')
 
-  assert.equal(applyOp(board, { type: 'sharedEntry.remove', projectId: 'p', entryId: 's1' }), null)
-  assert.equal(board.projects[0].sharedEntries.length, 0)
-  assert.deepEqual(board.projects[0].tasks[0].refs, ['missing'], 'removing an entry drops only its own reference')
+  assert.equal(applyOp(board, { type: 'reference.remove', projectId: 'p', referenceId: 's1' }), null)
+  assert.equal(board.projects[0].references.length, 1)
+  assert.deepEqual(board.projects[0].tasks[0].refs, ['missing'], 'removing a reference drops only its own links')
+
+  // Compatibility: the version-9 entry operations still work, as links.
+  assert.equal(applyOp(board, { type: 'sharedEntry.add', projectId: 'p', id: 's9', name: '旧入口', path: 'docs/old.md' }), null)
+  assert.equal(board.projects[0].references.find(entry => entry.id === 's9').kind, 'link')
+  assert.equal(applyOp(board, { type: 'sharedEntry.patch', projectId: 'p', entryId: 's9', path: 'docs/new.md' }), null)
+  assert.equal(board.projects[0].references.find(entry => entry.id === 's9').value, 'docs/new.md')
+  // The contract spells the same alias `sharedEntry.update`; accept it too.
+  assert.equal(applyOp(board, { type: 'sharedEntry.update', projectId: 'p', entryId: 's9', path: 'docs/newer.md' }), null)
+  assert.equal(board.projects[0].references.find(entry => entry.id === 's9').value, 'docs/newer.md')
+  assert.equal(applyOp(board, { type: 'sharedEntry.patch', projectId: 'p', entryId: 'nope', path: 'x' }), 'unknown_reference')
+  assert.equal(applyOp(board, { type: 'sharedEntry.remove', projectId: 'p', entryId: 's9' }), null)
+  assert.equal(board.projects[0].references.some(entry => entry.id === 's9'), false)
 })
 
 test('unknown references are dropped when a document is loaded', () => {

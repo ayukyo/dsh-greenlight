@@ -274,7 +274,7 @@ export function putCards(board, projectId, projectName, tasks) {
       name: projectName === '' ? '恢复的项目' : projectName,
       tasks: [],
       memory: [],
-      sharedEntries: [],
+      references: [],
       trash: [],
       acceptanceMode: 'auto',
       acceptanceRules: { requireEvidence: true, requireDeliverables: false, verifyDeliverables: true, requireSession: false, requireVerifiedClaim: false },

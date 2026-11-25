@@ -38,8 +38,8 @@ window.__ModuleLoader__.load({
     const PANEL_ID = PACKAGE_NAME + ':board'
     /** Local storage key of the board document (kept across versions so it migrates in place). */
     const STORAGE_KEY = 'dsh.greenlight.v1'
-    /** Document version written back to storage. */
-    const DOC_VERSION = 7
+    /** Document version written back to storage; it mirrors the Host document shape. */
+    const DOC_VERSION = 10
     /** Subtask priorities, low to high. */
     const PRIORITIES = ['low', 'normal', 'high', 'urgent']
     /** How long a removed card stays restorable (mirrors the Host rule). */
@@ -63,7 +63,7 @@ window.__ModuleLoader__.load({
     /** Header the Host requires on writes; a cross-origin page cannot set it silently. */
     const HOST_GUARD_HEADER = 'x-greenlight'
     /** Operations merged into one pending write instead of queueing behind it. */
-    const COALESCED_OPS = ['task.patch', 'project.rename', 'project.setShared']
+    const COALESCED_OPS = ['task.patch', 'project.rename', 'reference.update']
     /** Wait before a queued batch is sent, so a typing burst costs one request. */
     const FLUSH_DELAY_MS = 140
     /** Retry delays after a transport failure, in milliseconds. */
@@ -88,7 +88,7 @@ window.__ModuleLoader__.load({
     const zh = {
       'panel.label': '绿灯看板',
       'page.title': '绿灯看板',
-      'page.subtitle': '按项目拆任务，每个子任务可绑定一个主会话。能核对的自动通过（绿灯），核不了的才转人工（黄灯）；项目内共享资料、引用资料与记忆。',
+      'page.subtitle': '按项目拆任务，每个子任务可绑定一个主会话。能核对的自动通过（绿灯），核不了的才转人工（黄灯）；项目内资料与记忆。',
       'page.back': '返回对话',
       'sync.connecting': '连接中…',
       'sync.synced': '已同步',
@@ -115,9 +115,18 @@ window.__ModuleLoader__.load({
       'detail.progress': '完成度',
       'detail.deleteProject': '删除项目',
       'detail.deleteProjectConfirm': '删除项目「%s」？\n\n该项目下的子任务和项目记忆都会一起删除。',
-      'shared.section': '共享资料',
-      'shared.hint': '所有子任务共用；可写文档路径、约定、链接等',
-      'shared.placeholder': '例如：\n- 文档：docs/spec.md\n- 约定：先评审再实现',
+      'references.section': '项目资料',
+      'references.hint': '链接会被复查、可被卡片引用；约定只作为项目说明文本',
+      'references.kind': '类型',
+      'references.kindNote': '约定',
+      'references.kindLink': '链接',
+      'references.name': '名称',
+      'references.linkValue': '路径或链接',
+      'references.noteValue': '约定内容',
+      'references.description': '说明（可选）',
+      'references.add': '添加资料',
+      'references.empty': '还没有项目资料',
+      'references.delete': '删除资料',
       'tone.red': '异常',
       'tone.yellow': '推进中',
       'tone.green': '顺利',
@@ -209,7 +218,7 @@ window.__ModuleLoader__.load({
       'confirm.archive': '归档',
       'confirm.purge': '清空',
       'confirm.deleteProject': '删除项目「%s」？',
-      'confirm.deleteProjectBody': '项目下的子任务、项目记忆和引用资料会一起删除，无法撤销。',
+      'confirm.deleteProjectBody': '项目下的子任务、项目记忆和项目资料会一起删除，无法撤销。',
       'confirm.projectTasks': '子任务：%s 个',
       'confirm.projectMemory': '项目记忆：%s 条',
       'confirm.deleteTask': '删除子任务「%s」？',
@@ -251,13 +260,6 @@ window.__ModuleLoader__.load({
       'task.tags': '标签',
       'task.tagsPlaceholder': '用逗号分隔',
       'task.refs': '引用资料',
-      'shared.add': '添加资料',
-      'shared.name': '名称',
-      'shared.path': '路径或链接',
-      'shared.description': '说明（可选）',
-      'shared.empty': '还没有共享资料条目',
-      'shared.entryHint': '任意子任务都可以引用这些条目',
-      'shared.delete': '删除资料',
       'trash.section': '回收站',
       'trash.hint': '删除的卡片保留 7 天，可恢复',
       'trash.empty': '回收站是空的',
@@ -323,9 +325,18 @@ window.__ModuleLoader__.load({
       'detail.progress': 'Completion',
       'detail.deleteProject': 'Delete project',
       'detail.deleteProjectConfirm': 'Delete the project "%s"?\n\nIts subtasks and project memory are deleted with it.',
-      'shared.section': 'Shared reference',
-      'shared.hint': 'Used by every subtask: document paths, conventions, links…',
-      'shared.placeholder': 'For example:\n- Doc: docs/spec.md\n- Rule: review before implementing',
+      'references.section': 'Project references',
+      'references.hint': 'Links are rechecked and cards can point at them; notes stay as project conventions',
+      'references.kind': 'Type',
+      'references.kindNote': 'Convention',
+      'references.kindLink': 'Link',
+      'references.name': 'Name',
+      'references.linkValue': 'Path or link',
+      'references.noteValue': 'Convention text',
+      'references.description': 'Description (optional)',
+      'references.add': 'Add reference',
+      'references.empty': 'No project references yet',
+      'references.delete': 'Delete reference',
       'tone.red': 'At risk',
       'tone.yellow': 'In progress',
       'tone.green': 'On track',
@@ -459,13 +470,6 @@ window.__ModuleLoader__.load({
       'task.tags': 'Tags',
       'task.tagsPlaceholder': 'comma separated',
       'task.refs': 'References',
-      'shared.add': 'Add reference',
-      'shared.name': 'Name',
-      'shared.path': 'Path or link',
-      'shared.description': 'Description (optional)',
-      'shared.empty': 'No shared references yet',
-      'shared.entryHint': 'any subtask can reference these entries',
-      'shared.delete': 'Delete reference',
       'trash.section': 'Trash',
       'trash.hint': 'Removed cards stay restorable for 7 days',
       'trash.empty': 'Trash is empty',
@@ -2040,7 +2044,7 @@ window.__ModuleLoader__.load({
      */
     function opKey(op) {
       if (op === null || typeof op !== 'object') return ''
-      const parts = [op.type, op.projectId, op.taskId, op.memoryId]
+      const parts = [op.type, op.projectId, op.taskId, op.memoryId, op.referenceId]
       return parts.map(part => (typeof part === 'string' ? part : '')).join('|')
     }
 
@@ -2158,12 +2162,29 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Parse one stored project. A blank name is kept for the same reason a
-     * blank subtask title is: editing must not drop the record under the
-     * cursor.
+     * Parse one stored project reference: a `link` is a path or URL the Host
+     * rechecks and cards may point at; a `note` is convention text that is
+     * never probed, so it can never be marked stale.
      * @param item - candidate from the stored document.
-     * @returns a normalized project, or null when the entry is unusable.
+     * @returns a normalized reference, or null when the entry is unusable.
      */
+    function normalizeReference(item) {
+      if (item === null || typeof item !== 'object') return null
+      const name = typeof item.name === 'string' ? item.name.trim() : ''
+      if (name === '') return null
+      const kind = item.kind === 'note' ? 'note' : 'link'
+      return {
+        id: typeof item.id === 'string' && item.id !== '' ? item.id : createId('ref-'),
+        kind,
+        name,
+        value: typeof item.value === 'string' ? item.value : '',
+        description: typeof item.description === 'string' ? item.description : '',
+        staleSince: kind === 'link' && typeof item.staleSince === 'number' && isFinite(item.staleSince) && item.staleSince > 0
+          ? item.staleSince
+          : 0,
+      }
+    }
+
     /**
      * Normalize the acceptance rules of one project.
      * @param value - candidate rules.
@@ -2179,6 +2200,13 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /**
+     * Parse one stored project. A blank name is kept for the same reason a
+     * blank subtask title is: editing must not drop the record under the
+     * cursor.
+     * @param item - candidate from the stored document.
+     * @returns a normalized project, or null when the entry is unusable.
+     */
     function normalizeProject(item) {
       if (item === null || typeof item !== 'object') return null
       if (typeof item.name !== 'string') return null
@@ -2215,26 +2243,51 @@ window.__ModuleLoader__.load({
       for (let index = 0; index < memory.length; index += 1) {
         if (memory[index].taskId !== '' && known[memory[index].taskId] !== true) memory[index].taskId = ''
       }
-      const sharedSource = Array.isArray(item.sharedEntries) ? item.sharedEntries : []
-      const sharedEntries = []
-      for (let index = 0; index < sharedSource.length; index += 1) {
-        const entry = sharedSource[index]
-        if (entry === null || typeof entry !== 'object') continue
-        const name = typeof entry.name === 'string' ? entry.name.trim() : ''
-        if (name === '') continue
-        sharedEntries.push({
-          id: typeof entry.id === 'string' && entry.id !== '' ? entry.id : createId('s'),
-          name,
-          path: typeof entry.path === 'string' ? entry.path : '',
-          description: typeof entry.description === 'string' ? entry.description : '',
-          staleSince: typeof entry.staleSince === 'number' ? entry.staleSince : 0,
-          createdAt: typeof entry.createdAt === 'number' && isFinite(entry.createdAt) ? entry.createdAt : Date.now(),
+      // Version 9 kept project material in two fields — a free-text `shared`
+      // block and a `sharedEntries` list — and version 10 folds both into one
+      // typed list. A stored v9 document is migrated here, in memory, and the
+      // legacy fields are dropped so what gets written back is already v10.
+      const references = []
+      const referenceSource = Array.isArray(item.references) ? item.references : []
+      for (let index = 0; index < referenceSource.length; index += 1) {
+        const reference = normalizeReference(referenceSource[index])
+        if (reference !== null) references.push(reference)
+      }
+      const sharedText = typeof item.shared === 'string' ? item.shared : ''
+      if (sharedText.trim() !== '') {
+        // The old free text becomes a note, kept first: that is where it was read.
+        references.unshift({
+          id: createId('ref-'),
+          kind: 'note',
+          name: '项目说明',
+          value: sharedText,
+          description: '',
+          staleSince: 0,
         })
       }
-      const sharedIds = {}
-      for (let index = 0; index < sharedEntries.length; index += 1) sharedIds[sharedEntries[index].id] = true
+      const legacyEntrySource = Array.isArray(item.sharedEntries) ? item.sharedEntries : []
+      for (let index = 0; index < legacyEntrySource.length; index += 1) {
+        const entry = legacyEntrySource[index]
+        if (entry === null || typeof entry !== 'object') continue
+        const reference = normalizeReference({
+          id: entry.id,
+          kind: 'link',
+          name: entry.name,
+          value: entry.path,
+          description: entry.description,
+          staleSince: entry.staleSince,
+        })
+        if (reference !== null) references.push(reference)
+      }
+      // A hand-edited document may repeat an id; the first one keeps it so the
+      // cards that already point at it stay valid.
+      const knownReferences = {}
+      for (let index = 0; index < references.length; index += 1) {
+        while (knownReferences[references[index].id] === true) references[index].id = createId('ref-')
+        knownReferences[references[index].id] = true
+      }
       for (let index = 0; index < tasks.length; index += 1) {
-        tasks[index].refs = tasks[index].refs.filter(ref => sharedIds[ref] === true)
+        tasks[index].refs = tasks[index].refs.filter(ref => knownReferences[ref] === true)
       }
       return {
         id: typeof item.id === 'string' && item.id !== '' ? item.id : createId('p'),
@@ -2245,8 +2298,7 @@ window.__ModuleLoader__.load({
         anchor: item.anchor !== null && typeof item.anchor === 'object' ? item.anchor : { digest: '', decisions: [], risks: [], deviations: [] },
         lastCheckAt: typeof item.lastCheckAt === 'number' ? item.lastCheckAt : 0,
         rootDir: typeof item.rootDir === 'string' ? item.rootDir : '',
-        shared: typeof item.shared === 'string' ? item.shared : '',
-        sharedEntries,
+        references,
         tasks,
         memory,
         trash,
@@ -2303,8 +2355,7 @@ window.__ModuleLoader__.load({
           id: createId('p'),
           name: '默认项目',
           acceptanceMode: 'auto',
-          shared: '',
-          sharedEntries: [],
+          references: [],
           tasks,
           memory: [],
           trash: [],
@@ -2950,7 +3001,12 @@ window.__ModuleLoader__.load({
     function buildDispatchPrompt(task, project) {
       const lines = ['请执行看板上的这个子任务。', '', '标题：' + task.title]
       if (task.note !== '') lines.push('说明：' + task.note)
-      if (project.shared !== '') lines.push('', '项目共享资料：', project.shared)
+      if (project.references.length > 0) {
+        lines.push('', '项目资料：')
+        for (const reference of project.references) {
+          lines.push('- [' + (reference.kind === 'note' ? '约定' : '链接') + '] ' + reference.name + (reference.value === '' ? '' : '：' + reference.value))
+        }
+      }
       const linked = project.memory.filter(entry => entry.taskId === task.id)
       if (linked.length > 0) {
         lines.push('', '相关项目记忆：')
@@ -3147,7 +3203,7 @@ window.__ModuleLoader__.load({
      * @returns the card element.
      */
     function TaskCard({
-      task, t, linkedMemory, summary, sessionOptions, sessionBusy, sessionError, sharedById, sharedEntries, actions,
+      task, t, linkedMemory, summary, sessionOptions, sessionBusy, sessionError, references, actions,
     }) {
       const [rejecting, setRejecting] = React.useState(false)
       const [reason, setReason] = React.useState('')
@@ -3436,18 +3492,18 @@ window.__ModuleLoader__.load({
           title: t('task.tagsPlaceholder'),
           onChange: (event) => { actions.tags(event.target.value) },
         })),
-      sharedEntries.length === 0
+      references.length === 0
         ? null
         : h('div', { className: 'dsh-board__refRow' },
           h('span', { className: 'dsh-board__sessionLabel' }, t('task.refs')),
-          sharedEntries.map(entry => h('button', {
-            key: entry.id,
+          references.map(reference => h('button', {
+            key: reference.id,
             type: 'button',
             className: 'dsh-board__chip dsh-board__chip--toggle',
-            'data-active': task.refs.includes(entry.id) ? 'true' : undefined,
-            title: entry.path === '' ? entry.name : entry.path,
-            onClick: () => { actions.toggleRef(entry.id) },
-          }, entry.name))),
+            'data-active': task.refs.includes(reference.id) ? 'true' : undefined,
+            title: reference.value === '' ? reference.name : reference.value,
+            onClick: () => { actions.toggleRef(reference.id) },
+          }, reference.name))),
       h('input', {
         className: 'dsh-board__taskNote',
         type: 'text',
@@ -3557,12 +3613,7 @@ window.__ModuleLoader__.load({
       }, [project])
 
       const sessionOptions = React.useMemo(() => sessionOptionsOf(sessionsSnapshot), [sessionsSnapshot])
-      const sharedById = React.useMemo(() => {
-        const map = {}
-        for (const entry of project.sharedEntries) map[entry.id] = entry
-        return map
-      }, [project])
-      const [sharedDraft, setSharedDraft] = React.useState({ name: '', path: '', description: '' })
+      const [referenceDraft, setReferenceDraft] = React.useState({ kind: 'link', name: '', value: '', description: '' })
       const [filterText, setFilterText] = React.useState('')
       const [filterMode, setFilterMode] = React.useState('all')
 
@@ -3621,6 +3672,19 @@ window.__ModuleLoader__.load({
         setMemoryLink('')
       }
 
+      // A link needs something to probe, a note does not; the Host validates
+      // the same way, so the draft is only sent when it can be accepted.
+      const addReference = (event) => {
+        event.preventDefault()
+        const kind = referenceDraft.kind === 'note' ? 'note' : 'link'
+        const name = referenceDraft.name.trim()
+        const value = kind === 'link' ? referenceDraft.value.trim() : referenceDraft.value
+        if (name === '') return
+        if (kind === 'link' && value === '') return
+        actions.addReference(kind, name, value, referenceDraft.description.trim())
+        setReferenceDraft({ kind, name: '', value: '', description: '' })
+      }
+
       const createSession = (taskId) => {
         setBusyTaskId(taskId)
         setSessionError('')
@@ -3648,8 +3712,7 @@ window.__ModuleLoader__.load({
         sessionOptions,
         sessionBusy: busyTaskId === task.id,
         sessionError: busyTaskId === '' && sessionError !== '' ? sessionError : '',
-        sharedById,
-        sharedEntries: project.sharedEntries,
+        references: project.references,
         actions: {
           title: (value) => { actions.updateTask(task.id, { title: value, titleSource: 'manual' }) },
           progress: (value) => { actions.updateTask(task.id, { progress: value }) },
@@ -3809,63 +3872,72 @@ window.__ModuleLoader__.load({
                 t('task.running') + ' ' + String(counts.running)))),
         h('div', { className: 'dsh-board__card' },
           h('div', { className: 'dsh-board__sectionHead' },
-            h('span', { className: 'dsh-board__sectionTitle' }, t('shared.section')),
-            h('span', { className: 'dsh-board__sectionHint' }, t('shared.hint'))),
-          h('textarea', {
-            className: 'dsh-board__shared',
-            value: project.shared,
-            rows: 4,
-            placeholder: t('shared.placeholder'),
-            'aria-label': t('shared.section'),
-            onChange: (event) => { actions.updateShared(event.target.value) },
-          })),
-        h('div', { className: 'dsh-board__card' },
-          h('div', { className: 'dsh-board__sectionHead' },
-            h('span', { className: 'dsh-board__sectionTitle' }, t('task.refs')),
-            h('span', { className: 'dsh-board__sectionHint' }, t('shared.entryHint'))),
-          h('form', {
-            className: 'dsh-board__form',
-            onSubmit: (event) => {
-              event.preventDefault()
-              const name = sharedDraft.name.trim()
-              if (name === '') return
-              actions.addSharedEntry(name, sharedDraft.path.trim(), sharedDraft.description.trim())
-              setSharedDraft({ name: '', path: '', description: '' })
+            h('span', { className: 'dsh-board__sectionTitle' }, t('references.section')),
+            h('span', { className: 'dsh-board__sectionHint' }, t('references.hint'))),
+          h('form', { className: 'dsh-board__form', onSubmit: addReference },
+            h('select', {
+              className: 'dsh-board__select dsh-board__select--compact',
+              value: referenceDraft.kind,
+              'aria-label': t('references.kind'),
+              title: t('references.kind'),
+              onChange: (event) => { setReferenceDraft({ ...referenceDraft, kind: event.target.value }) },
             },
-          },
-          h('input', {
-            className: 'dsh-board__input dsh-board__input--compact',
-            type: 'text',
-            value: sharedDraft.name,
-            placeholder: t('shared.name'),
-            'aria-label': t('shared.name'),
-            onChange: (event) => { setSharedDraft({ ...sharedDraft, name: event.target.value }) },
-          }),
-          h('input', {
-            className: 'dsh-board__input dsh-board__input--compact',
-            type: 'text',
-            value: sharedDraft.path,
-            placeholder: t('shared.path'),
-            'aria-label': t('shared.path'),
-            onChange: (event) => { setSharedDraft({ ...sharedDraft, path: event.target.value }) },
-          }),
-          h('button', { type: 'submit', className: 'dsh-board__ghost' }, t('shared.add'))),
-          project.sharedEntries.length === 0
-            ? h('p', { className: 'dsh-board__empty' }, t('shared.empty'))
+            h('option', { value: 'link' }, t('references.kindLink')),
+            h('option', { value: 'note' }, t('references.kindNote'))),
+            h('input', {
+              className: 'dsh-board__input dsh-board__input--compact',
+              type: 'text',
+              value: referenceDraft.name,
+              placeholder: t('references.name'),
+              'aria-label': t('references.name'),
+              onChange: (event) => { setReferenceDraft({ ...referenceDraft, name: event.target.value }) },
+            }),
+            referenceDraft.kind === 'note'
+              ? h('textarea', {
+                className: 'dsh-board__shared',
+                rows: 3,
+                value: referenceDraft.value,
+                placeholder: t('references.noteValue'),
+                'aria-label': t('references.noteValue'),
+                onChange: (event) => { setReferenceDraft({ ...referenceDraft, value: event.target.value }) },
+              })
+              : h('input', {
+                className: 'dsh-board__input dsh-board__input--compact',
+                type: 'text',
+                value: referenceDraft.value,
+                placeholder: t('references.linkValue'),
+                'aria-label': t('references.linkValue'),
+                onChange: (event) => { setReferenceDraft({ ...referenceDraft, value: event.target.value }) },
+              }),
+            h('input', {
+              className: 'dsh-board__input dsh-board__input--compact',
+              type: 'text',
+              value: referenceDraft.description,
+              placeholder: t('references.description'),
+              'aria-label': t('references.description'),
+              onChange: (event) => { setReferenceDraft({ ...referenceDraft, description: event.target.value }) },
+            }),
+            h('button', { type: 'submit', className: 'dsh-board__ghost' }, t('references.add'))),
+          project.references.length === 0
+            ? h('p', { className: 'dsh-board__empty' }, t('references.empty'))
             : h('div', { className: 'dsh-board__memoryList' },
-              project.sharedEntries.map(entry => h('div', { key: entry.id, className: 'dsh-board__memoryItem' },
-                h('span', { className: 'dsh-board__chip' }, entry.name),
+              project.references.map(reference => h('div', { key: reference.id, className: 'dsh-board__memoryItem' },
+                h('span', { className: 'dsh-board__chip' },
+                  reference.kind === 'note' ? t('references.kindNote') : t('references.kindLink')),
                 h('span', { className: 'dsh-board__memoryText' },
-                  entry.path === '' ? entry.description : entry.path + (entry.description === '' ? '' : ' · ' + entry.description)),
-                entry.staleSince > 0
+                  reference.value === '' ? reference.name : reference.name + '：' + reference.value),
+                reference.description === ''
+                  ? null
+                  : h('span', { className: 'dsh-board__sectionHint' }, reference.description),
+                reference.kind === 'link' && reference.staleSince > 0
                   ? h('span', { className: 'dsh-board__badge', 'data-tone': 'warn' }, t('task.staleRef'))
                   : null,
                 h('button', {
                   type: 'button',
                   className: 'dsh-board__delete',
-                  'aria-label': t('shared.delete'),
-                  title: t('shared.delete'),
-                  onClick: () => { actions.removeSharedEntry(entry.id) },
+                  'aria-label': t('references.delete'),
+                  title: t('references.delete'),
+                  onClick: () => { actions.removeReference(reference.id) },
                 }, '\u00d7')))),
           h('button', {
             type: 'button',
@@ -4053,7 +4125,7 @@ window.__ModuleLoader__.load({
           return
         }
         setMissingProjectName(false)
-        const project = { id: createId('p'), name, shared: '', tasks: [], memory: [], createdAt: Date.now() }
+        const project = { id: createId('p'), name, references: [], tasks: [], memory: [], createdAt: Date.now() }
         commit(projects.concat([project]))
         sync.enqueue([{ type: 'project.add', id: project.id, name }])
         setProjectDraft('')
@@ -4107,10 +4179,39 @@ window.__ModuleLoader__.load({
           replaceProject(selectedProjectId, project => ({ ...project, name: value }))
           sync.enqueue([{ type: 'project.rename', projectId: selectedProjectId, name: value }])
         },
-        updateShared: (value) => {
+        addReference: (kind, name, value, description) => {
           if (selectedProjectId === '') return
-          replaceProject(selectedProjectId, project => ({ ...project, shared: value }))
-          sync.enqueue([{ type: 'project.setShared', projectId: selectedProjectId, shared: value }])
+          const reference = {
+            id: createId('ref-'),
+            kind,
+            name,
+            value,
+            description,
+            staleSince: 0,
+          }
+          replaceProject(selectedProjectId, project => ({
+            ...project,
+            references: project.references.concat([reference]),
+          }))
+          sync.enqueue([{
+            type: 'reference.add',
+            projectId: selectedProjectId,
+            id: reference.id,
+            kind,
+            name,
+            value,
+            description,
+          }])
+        },
+        updateReference: (referenceId, patch) => {
+          if (selectedProjectId === '') return
+          replaceProject(selectedProjectId, project => ({
+            ...project,
+            references: project.references.map(reference => (reference.id === referenceId
+              ? { ...reference, ...patch }
+              : reference)),
+          }))
+          sync.enqueue([{ type: 'reference.update', projectId: selectedProjectId, referenceId, patch }])
         },
         setAcceptance: (mode) => {
           if (selectedProjectId === '') return
@@ -4288,29 +4389,23 @@ window.__ModuleLoader__.load({
           if (drag.status === status) return
           actions.moveTask(drag.taskId, drag.status, status)
         },
-        addSharedEntry: (name, path, description) => {
-          if (selectedProjectId === '') return
-          const entry = { id: createId('s'), name, path, description, createdAt: Date.now() }
-          replaceProject(selectedProjectId, project => ({ ...project, sharedEntries: project.sharedEntries.concat([entry]) }))
-          sync.enqueue([{ type: 'sharedEntry.add', projectId: selectedProjectId, id: entry.id, name, path, description }])
-        },
-        removeSharedEntry: (entryId) => {
+        removeReference: (referenceId) => {
           if (selectedProjectId === '') return
           const project = projects.find(entry => entry.id === selectedProjectId)
-          const target = project === undefined ? undefined : project.sharedEntries.find(entry => entry.id === entryId)
+          const target = project === undefined ? undefined : project.references.find(entry => entry.id === referenceId)
           if (target === undefined) return
           askConfirm({
             title: fill(t('confirm.deleteRef'), target.name),
-            body: target.path === '' ? t('confirm.deleteRefBody') : target.path,
+            body: target.value === '' ? t('confirm.deleteRefBody') : target.value,
             confirmLabel: t('confirm.delete'),
             tone: 'danger',
             onConfirm: () => {
               replaceProject(selectedProjectId, entry => ({
                 ...entry,
-                sharedEntries: entry.sharedEntries.filter(item => item.id !== entryId),
-                tasks: entry.tasks.map(task => ({ ...task, refs: task.refs.filter(ref => ref !== entryId) })),
+                references: entry.references.filter(item => item.id !== referenceId),
+                tasks: entry.tasks.map(task => ({ ...task, refs: task.refs.filter(ref => ref !== referenceId) })),
               }))
-              sync.enqueue([{ type: 'sharedEntry.remove', projectId: selectedProjectId, entryId }])
+              sync.enqueue([{ type: 'reference.remove', projectId: selectedProjectId, referenceId }])
             },
           })
         },

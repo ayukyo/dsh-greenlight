@@ -75,9 +75,12 @@ export async function probeDeliverables(options) {
 /**
  * Recheck every declared path in a project.
  *
- * Used by the stale sweep: a shared reference whose file disappeared, or a card
+ * Used by the stale sweep: a link reference whose file disappeared, or a card
  * whose deliverables no longer exist, is worse than one that never claimed them,
  * because the board would keep presenting it as true.
+ *
+ * Only `link` references are probed. A `note` is convention text, not a claim
+ * about anything on disk, so it can never go stale.
  *
  * @param project - project to sweep.
  * @param options - `{ stat }` probe override.
@@ -85,12 +88,13 @@ export async function probeDeliverables(options) {
  */
 export async function probeProject(project, options) {
   const readSize = options === undefined || options.stat === undefined ? defaultStat : options.stat
-  const entries = Array.isArray(project.sharedEntries) ? project.sharedEntries : []
+  const entries = Array.isArray(project.references) ? project.references : []
   const tasks = Array.isArray(project.tasks) ? project.tasks : []
   const staleEntries = []
   for (const entry of entries) {
-    if (typeof entry.path !== 'string' || entry.path.trim() === '') continue
-    const probe = await probeDeliverables({ paths: [entry.path], rootDir: project.rootDir, stat: readSize })
+    if (entry.kind !== 'link') continue
+    if (typeof entry.value !== 'string' || entry.value.trim() === '') continue
+    const probe = await probeDeliverables({ paths: [entry.value], rootDir: project.rootDir, stat: readSize })
     if (probe.missing.length > 0 || probe.unresolved.length > 0) staleEntries.push(entry.id)
   }
   const deliverables = {}
