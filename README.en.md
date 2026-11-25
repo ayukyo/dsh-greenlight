@@ -7,14 +7,14 @@ English | [简体中文](./README.md)
 # Greenlight — an acceptance board
 
 > **What can be checked closes itself. What cannot asks a human.**
-> A project task board with an acceptance judgement: cards prove their own completion, and you only look at the ones that cannot.
+> A project board with an acceptance judgement: cards prove their own completion, and you only look at the ones that cannot.
 
-A DeepSeek Harness plugin. It adds a Project board to the left sidebar: work splits into
+A DeepSeek Harness plugin. It adds a Greenlight board to the left sidebar: work splits into
 projects and subtasks, each subtask can own a main Session, and when an agent submits through
 the `greenlight_*` tools it reports **a completion note, verification claims and deliverables** —
 the Host decides whether the card may close.
 
-![Greenlight board: project rail on the left; a project summary, shared references, six columns and an archive on the right](docs/preview.svg)
+<img alt="Greenlight board: project rail, project summary, six task columns and the archive" src="docs/board.png" width="900">
 
 ## Why "green light"
 
@@ -66,7 +66,7 @@ Humans stop reviewing everything and start handling exceptions. That is the gree
 dsh plugin --profile web add dsh-greenlight
 ```
 
-Restart `dsh web` and refresh. The sidebar shows **项目看板 / Project board**. No token, no API key,
+Restart `dsh web` and refresh. The sidebar shows **绿灯看板 / Greenlight Board**. No token, no API key,
 no database.
 
 ## Quick start

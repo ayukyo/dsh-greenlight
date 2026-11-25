@@ -1,5 +1,5 @@
 /**
- * Data-layer and store tests for the project board Host half.
+ * Data-layer and store tests for the Greenlight board Host half.
  * Run with: node --test host/test
  */
 import assert from 'node:assert/strict'
@@ -681,4 +681,24 @@ test('a gate also guards a status written through a patch', () => {
   assert.equal(applyOp(board, { type: 'task.patch', projectId: 'p1', taskId: 't1', patch: { evidence: '做了' } }), null)
   assert.equal(applyOp(board, { type: 'task.patch', projectId: 'p1', taskId: 't1', patch: { status: 'review' } }), null)
   assert.equal(task.status, 'review')
+})
+
+test('the store parks the previous document before a whole-document write', async () => {
+  const dir = await tempDir()
+  const file = join(dir, 'board.json')
+  const store = createStore(file)
+  await store.init()
+  await store.mutate(draft => {
+    draft.projects.push({ ...draft.projects[0], id: 'p-keep', name: '留下的' })
+    return draft
+  })
+  const before = store.snapshot()
+  const saved = await store.backup('before-replace')
+  assert.equal(typeof saved, 'string')
+  assert.equal(saved === '', false, 'a non-empty document must be copied')
+  const copied = JSON.parse(await readFile(saved, 'utf8'))
+  assert.equal(copied.projects.length, before.projects.length, 'the copy holds the document as it was')
+  // An empty/missing document has nothing worth keeping.
+  const blank = createStore(join(dir, 'missing', 'board.json'))
+  assert.equal(await blank.backup('before-replace'), '')
 })

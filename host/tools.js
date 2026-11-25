@@ -1,5 +1,5 @@
 /**
- * Project board tools the model can call.
+ * Greenlight board tools the model can call.
  *
  * These are raw `ToolDefinition` objects (no `defineTool` import): this bundle
  * lives outside the Harness package tree, so it registers the wire shape the
@@ -142,6 +142,9 @@ async function runOp(store, op, archiver) {
     ? await archiver.findTasks(op.projectId, op.taskIds)
     : null
   const board = await store.mutate(async (draft) => {
+    if (op !== null && typeof op === 'object' && (op.type === 'board.replace' || op.type === 'board.import')) {
+      await store.backup('before-replace')
+    }
     if (restoring !== null) {
       const added = putCards(draft, op.projectId, restoring.projectName, restoring.tasks)
       if (added === 0) {
@@ -235,7 +238,7 @@ export function createBoardTools(store, options) {
   return [
     {
       name: 'greenlight_overview',
-      description: 'List the project board: every project with its completion percentage, colour band, and subtask counts per status. Use this first to find a projectId.',
+      description: 'List the board: every project with its completion percentage, colour band, and subtask counts per status. Use this first to find a projectId.',
       parameters: { type: 'object', properties: {}, additionalProperties: false },
       output: {
         schema: {

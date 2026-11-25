@@ -1,5 +1,5 @@
 /**
- * HTTP surface tests for the project board Host half.
+ * HTTP surface tests for the Greenlight board Host half.
  * Run with: node --test host/test
  */
 import assert from 'node:assert/strict'

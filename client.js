@@ -1,5 +1,5 @@
 /**
- * Project task board — browser half.
+ * Greenlight board — browser half.
  *
  * The left sidebar entry and the page it opens are separate registrations:
  * `sidebar.panellist` supplies the icon inside the sidebar's own row button
@@ -86,9 +86,9 @@ window.__ModuleLoader__.load({
     const SESSION_OPTION_LIMIT = 60
 
     const zh = {
-      'panel.label': '项目看板',
-      'page.title': '项目任务看板',
-      'page.subtitle': '按项目拆分任务：每个子任务可绑定一个主会话，标题从描述自动生成并可改，用百分比记录完成度（绿 / 黄 / 红），项目内的子任务共享项目记忆。',
+      'panel.label': '绿灯看板',
+      'page.title': '绿灯看板',
+      'page.subtitle': '按项目拆任务，每个子任务可绑定一个主会话。能核对的自动通过（绿灯），核不了的才转人工（黄灯）；项目内共享资料、引用资料与记忆。',
       'page.back': '返回对话',
       'sync.connecting': '连接中…',
       'sync.synced': '已同步',
@@ -292,9 +292,9 @@ window.__ModuleLoader__.load({
     }
 
     const en = {
-      'panel.label': 'Project board',
-      'page.title': 'Project task board',
-      'page.subtitle': 'Split work per project: each subtask can own a main Session, its title is derived from the description and stays editable, completion is a percentage (green / yellow / red), and subtasks share the project memory.',
+      'panel.label': 'Greenlight Board',
+      'page.title': 'Greenlight Board',
+      'page.subtitle': 'Work splits into projects and subtasks, each subtask can own a main Session. What can be checked closes itself on a green light; what cannot asks a human. Projects share references and memory.',
       'page.back': 'Back to conversation',
       'sync.connecting': 'Connecting…',
       'sync.synced': 'Synced',
@@ -2909,7 +2909,11 @@ window.__ModuleLoader__.load({
     /* ---------------------------------------------------------------- glyphs */
 
     /**
-     * The board mark: three columns of different heights.
+     * The Greenlight mark: a traffic light with the bottom lamp lit.
+     *
+     * One silhouette, three lamps, only "go" solid — it still reads at 16px and
+     * says which way the board leans without relying on colour, which the
+     * sidebar cannot promise.
      * @param props - requested square edge in pixels.
      * @returns the glyph element.
      */
@@ -2920,16 +2924,17 @@ window.__ModuleLoader__.load({
         viewBox: '0 0 20 20',
         fill: 'none',
         stroke: 'currentColor',
-        strokeWidth: 1.5,
+        strokeWidth: 1.4,
         strokeLinecap: 'round',
         strokeLinejoin: 'round',
         'aria-hidden': true,
         focusable: 'false',
         style: { display: 'block' },
       },
-      h('rect', { key: 'a', x: 3.1, y: 4.6, width: 3.6, height: 11, rx: 1.2 }),
-      h('rect', { key: 'b', x: 8.2, y: 4.6, width: 3.6, height: 7.4, rx: 1.2 }),
-      h('rect', { key: 'c', x: 13.3, y: 4.6, width: 3.6, height: 4.4, rx: 1.2 }))
+      h('rect', { key: 'body', x: 4.7, y: 1.5, width: 10.6, height: 17, rx: 5.3 }),
+      h('circle', { key: 'stop', cx: 10, cy: 6.3, r: 1.85, fill: 'currentColor', fillOpacity: 0.22, stroke: 'none' }),
+      h('circle', { key: 'wait', cx: 10, cy: 10, r: 1.85, fill: 'currentColor', fillOpacity: 0.45, stroke: 'none' }),
+      h('circle', { key: 'go', cx: 10, cy: 13.9, r: 2.05, fill: 'var(--dsw-alias-state-success-primary)', stroke: 'none' }))
     }
 
     /**
@@ -4713,7 +4718,7 @@ window.__ModuleLoader__.load({
      * @param ctx - the Client root context.
      */
     function apply(ctx) {
-      ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'project board: dictionaries')
+      ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'greenlight: dictionaries')
       const t = ctx.locale.bind(NS)
       const optionalService = (name) => {
         try {
@@ -4736,7 +4741,7 @@ window.__ModuleLoader__.load({
         } catch (error) {
           /* the layout service is already gone */
         }
-      }, 'project board: leave panel')
+      }, 'greenlight: leave panel')
 
       ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
         name: 'sidebar.panellist',

@@ -1,5 +1,5 @@
 /**
- * Project board — Host half.
+ * Greenlight board — Host half.
  *
  * Owns the authoritative board document, serves it to the Web panel over
  * loopback HTTP routes, and registers the model-facing `greenlight_*` tools.

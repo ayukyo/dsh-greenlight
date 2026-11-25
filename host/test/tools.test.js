@@ -1,5 +1,5 @@
 /**
- * Tool-layer and plugin-assembly tests for the project board Host half.
+ * Tool-layer and plugin-assembly tests for the Greenlight board Host half.
  * Run with: node --test host/test
  */
 import assert from 'node:assert/strict'

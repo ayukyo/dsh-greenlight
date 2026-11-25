@@ -162,3 +162,19 @@ test('prepareBatch lets a recheck see references added in the same batch', async
   assert.equal(applyOp(board, prepared[1]), null)
   assert.equal(board.projects[0].sharedEntries[0].staleSince > 0, true)
 })
+
+test('a completion in the same batch sees deliverables declared earlier in that batch', async () => {
+  const board = emptyBoard()
+  applyOp(board, { type: 'project.add', id: 'p1', name: 'P' })
+  applyOp(board, { type: 'task.add', projectId: 'p1', id: 't1', title: 'T', status: 'running' })
+  // Relative deliverables need a project root, or they count as unresolvable.
+  applyOp(board, { type: 'project.setAcceptance', projectId: 'p1', rootDir: join('C:', 'repo') })
+  const probe = async (path) => ({ size: String(path).endsWith('ok.md') ? 12 : 0 })
+  const prepared = await prepareBatch(board, [
+    { type: 'task.patch', projectId: 'p1', taskId: 't1', patch: { deliverables: ['docs/ok.md'] } },
+    { type: 'task.submit', projectId: 'p1', taskId: 't1', progress: 100 },
+  ], { stat: probe })
+  assert.deepEqual(prepared[1].verification.missing, [], 'the probe must see the deliverable the batch just declared')
+  assert.deepEqual(prepared[1].verification.unresolved, [])
+  assert.equal(prepared[1].verification.checked, true)
+})

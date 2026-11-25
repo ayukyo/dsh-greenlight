@@ -1,5 +1,5 @@
 /**
- * Headless verification for the project board client module.
+ * Headless verification for the Greenlight board client module.
  *
  * Runs the real client.js with stubbed browser globals, a minimal React hook
  * runtime, and a fake Cordis Client context. Verifies: module init, slot
@@ -521,7 +521,7 @@ const fakeCtx = {
   check('main page registered', !!main)
   check('both share one panel id', !!sidebar && !!main && sidebar.options.id === main.options.key)
   check('locale namespace bound', boundNamespace === 'greenlight', boundNamespace)
-  check('sidebar label localized', !!sidebar && sidebar.options.label() === '项目看板', !!sidebar ? sidebar.options.label() : '')
+  check('sidebar label localized', !!sidebar && sidebar.options.label() === '绿灯看板', !!sidebar ? sidebar.options.label() : '')
 
   const Page = main.component
   const injected = main.options.inject()

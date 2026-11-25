@@ -1,5 +1,5 @@
 /**
- * Project board HTTP surface.
+ * Greenlight board HTTP surface.
  *
  * Two exact routes on the Host web server:
  *   GET  /greenlight/state  → { revision, board, recovered }
@@ -304,6 +304,11 @@ export function createBoardRoutes(store, options) {
             && payload.revision !== draft.revision) {
             stale = { revision: draft.revision, board: draft }
             return null
+          }
+          // A whole-document write can drop work that no undo reaches, so the
+          // previous file is parked before the batch is applied.
+          if (payload.ops.some(op => op !== null && typeof op === 'object' && (op.type === 'board.replace' || op.type === 'board.import'))) {
+            await store.backup('before-replace')
           }
           // Archive work happens on a copy so a partially applied batch cannot
           // leave the draft half-archived.

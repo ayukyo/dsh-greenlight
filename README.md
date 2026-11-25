@@ -4,15 +4,15 @@
 
 [English](./README.en.md) | 简体中文
 
-# Greenlight · 验收看板
+# Greenlight · 绿灯看板
 
 > **能核对的自动通过，核不了的才找人。**
-> 一个带验收判断的项目任务看板：卡片自己证明完成，人只看证明不了的那几张。
+> 一个带验收判断的项目看板：卡片自己证明完成，人只看证明不了的那几张。
 
-DeepSeek Harness 插件。左栏增加「项目看板」入口：按项目拆分任务、每个子任务绑定一个主会话，
+DeepSeek Harness 插件。左栏增加「绿灯看板」入口：按项目拆分任务、每个子任务绑定一个主会话，
 agent 用 `greenlight_*` 工具交活时附上**完成说明 / 验证项 / 交付物**，由 Host 判定是否放行。
 
-![Greenlight 看板：左侧项目列表，右侧项目概览、共享资料、引用资料、六列任务与归档区](docs/preview.svg)
+<img alt="绿灯看板：项目列表、项目概览、子任务六列与归档区" src="docs/board.png" width="900">
 
 ## 为什么叫「绿灯」
 
@@ -59,7 +59,7 @@ agent 用 `greenlight_*` 工具交活时附上**完成说明 / 验证项 / 交�
 dsh plugin --profile web add dsh-greenlight
 ```
 
-安装后**重启 `dsh web` 并刷新页面**，侧边栏出现「项目看板」即成功。无需 Token、无需 API Key、无需数据库。
+安装后**重启 `dsh web` 并刷新页面**，侧边栏出现「绿灯看板」即成功。无需 Token、无需 API Key、无需数据库。
 
 > 官方 `@deepseek-ai/dsh-*` 包只写进 profile 的 `bundles` 列表；第三方插件按上面的 `plugin add` 安装即可。
 

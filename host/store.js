@@ -1,17 +1,25 @@
 /**
- * Project board store — the Host's authoritative document on disk.
+ * Greenlight board store — the Host's authoritative document on disk.
  *
  * Writes are serialized through one promise chain and are atomic (temp file +
  * rename), so a crash cannot leave a half-written document. A document that
  * cannot be parsed is moved aside instead of being overwritten, and the board
  * starts empty with a `recovered` flag the browser can show.
  */
-import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { mkdir, open, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises'
+import { basename, dirname, join } from 'node:path'
 import { emptyBoard, normalizeBoard } from './board.js'
 
 /**
  * @param file - absolute path of the board document.
+ * @returns the store.
+ */
+/** How many automatic pre-replace backups to keep. */
+export const MAX_BACKUPS = 10
+
+/**
+ * Create the board store.
+ * @param file - absolute document path.
  * @returns the store.
  */
 export function createStore(file) {
@@ -111,6 +119,58 @@ export function createStore(file) {
     return run
   }
 
+  /**
+   * Keep a copy of the document on disk before something replaces it wholesale.
+   *
+   * An import or a whole-document replace can delete work no undo can reach, so
+   * the previous file is parked beside it first. Only the newest few are kept.
+   * @param reason - short tag written into the file name.
+   * @returns the backup path, or an empty string when there was nothing to copy.
+   */
+  async function backup(reason) {
+    let text
+    try {
+      text = await readFile(file, 'utf8')
+    } catch (error) {
+      return ''
+    }
+    if (text.trim() === '') return ''
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const tag = typeof reason === 'string' && reason !== '' ? '-' + reason.replace(/[^a-z0-9-]/gi, '') : ''
+    const target = file + '.backup-' + stamp + tag
+    try {
+      await writeFile(target, text, 'utf8')
+    } catch (error) {
+      return ''
+    }
+    await prune()
+    return target
+  }
+
+  /**
+   * Drop old automatic backups, keeping the newest {@link MAX_BACKUPS}.
+   * @returns completion.
+   */
+  async function prune() {
+    const dir = dirname(file)
+    const prefix = basename(file) + '.backup-'
+    let names
+    try {
+      names = await readdir(dir)
+    } catch (error) {
+      return
+    }
+    const mine = names.filter(name => name.startsWith(prefix)).sort()
+    const extra = mine.slice(0, Math.max(0, mine.length - MAX_BACKUPS))
+    for (const name of extra) {
+      try {
+        await unlink(join(dir, name))
+      } catch (error) {
+        /* a backup that cannot be pruned is harmless */
+      }
+    }
+  }
+
   return {
     /**
      * @returns the current board (a clone; callers cannot mutate it).
@@ -132,5 +192,6 @@ export function createStore(file) {
     },
     init,
     mutate,
+    backup,
   }
 }

@@ -1,5 +1,5 @@
 /**
- * Project board data layer — pure functions only.
+ * Greenlight board data layer — pure functions only.
  *
  * The Host half owns this module: it normalizes whatever is on disk, migrates
  * the earlier browser-only documents, and applies every board operation. The

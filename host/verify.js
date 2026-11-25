@@ -144,7 +144,9 @@ export async function prepareBatch(board, ops, options) {
   const list = Array.isArray(ops) ? ops : []
   const prepared = []
   for (const op of list) {
-    if (op !== null && typeof op === 'object' && op.type === 'project.recheck') {
+    if (op !== null && typeof op === 'object' && (op.type === 'project.recheck' || completesOn(op))) {
+      // Both a stale sweep and a completion probe must see what earlier
+      // operations in the same batch did, so they run against a scratch board.
       const scratch = prepared.length === 0 ? board : applyOps(board, prepared).board
       prepared.push(await prepareOp(scratch, op, options))
       continue
@@ -152,6 +154,20 @@ export async function prepareBatch(board, ops, options) {
     prepared.push(await prepareOp(board, op, options))
   }
   return prepared
+}
+
+/**
+ * Whether an operation settles a card as complete.
+ * @param op - candidate operation.
+ * @returns true for the three shapes that finish a card.
+ */
+function completesOn(op) {
+  if (op.type === 'task.submit') return true
+  if (op.type === 'task.move') return op.status === 'done'
+  if (op.type === 'task.patch') {
+    return op.patch !== null && typeof op.patch === 'object' && op.patch.status === 'done'
+  }
+  return false
 }
 
 /**

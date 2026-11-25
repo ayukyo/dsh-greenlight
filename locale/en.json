@@ -1,7 +1,7 @@
 {
   "meta": {
-    "title": "Greenlight board",
-    "description": "Adds a Project board entry to the left sidebar where work moves on a green light: a card closes itself when its claims and deliverables check out, and only the unverifiable ones ask a human. Subtasks bind to a main Session, carry a completion note and deliverables that the Host really probes on disk, and are judged by verification layer (static / unit / build / host / device). Projects also get shared references, a decision anchor, verification debt, column gates, a cold-storage archive and a full audit trail. Agents drive it through the greenlight_* tools.",
+    "title": "Greenlight Board",
+    "description": "Adds a Greenlight board entry to the left sidebar where work moves on a green light: a card closes itself when its claims and deliverables check out, and only the unverifiable ones ask a human. Subtasks bind to a main Session, carry a completion note and deliverables that the Host really probes on disk, and are judged by verification layer (static / unit / build / host / device). Projects also get shared references, a decision anchor, verification debt, column gates, a cold-storage archive and a full audit trail. Agents drive it through the greenlight_* tools.",
     "detail": "docs/DETAIL.md"
   }
 }

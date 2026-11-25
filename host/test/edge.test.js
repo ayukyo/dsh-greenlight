@@ -1,5 +1,5 @@
 /**
- * Edge-case tests for the project board Host half: request bounds, duplicate
+ * Edge-case tests for the Greenlight board Host half: request bounds, duplicate
  * ids, clamping, revision normalization and diagnostics.
  * Run with: node --test host/test
  */
