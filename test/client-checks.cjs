@@ -1451,6 +1451,44 @@ console.log('\n[42] every destructive action is confirmed')
   // Nothing was written to the Host while all of that was cancelled.
   check('cancelled actions wrote nothing', hostState.board.projects[0].sharedEntries.length === 1 && hostState.board.projects[0].memory.length === 1, JSON.stringify({ shared: hostState.board.projects[0].sharedEntries.length, memory: hostState.board.projects[0].memory.length }))
 
+console.log('\n[43] the project rail collapses and remembers it')
+  const railSeed = {
+    version: 9,
+    revision: 41,
+    updatedAt: new Date().toISOString(),
+    projects: [
+      { id: 'pa', name: '甲项目', acceptanceMode: 'auto', acceptanceRules: {}, requiredLayers: [], gates: {}, anchor: {}, sharedEntries: [], memory: [], trash: [], tasks: [] },
+      { id: 'pb', name: '乙项目', acceptanceMode: 'auto', acceptanceRules: {}, requiredLayers: [], gates: {}, anchor: {}, sharedEntries: [], memory: [], trash: [], tasks: [] },
+    ],
+  }
+  await mount({ seedHost: railSeed })
+  await settle(300)
+
+  const railOf = () => byClassName('dsh-board__rail')[0]
+  const railButtons = () => byClassName('dsh-board__railToggle')
+  check('the rail starts expanded', railOf() !== undefined)
+  check('there is exactly one rail control', railButtons().length === 1, String(railButtons().length))
+  check('the control says it will collapse', byAria('收起项目栏') !== null)
+  check('project names are visible while expanded', textOf().includes('甲项目'))
+
+  const firstToggle = railButtons()[0]
+  click(byAria('收起项目栏'))
+  await settle(200)
+  check('collapsing removes the rail entirely', byClassName('dsh-board__rail').length === 0, String(byClassName('dsh-board__rail').length))
+  check('no project names remain on screen', !textOf().includes('甲项目'))
+  check('collapsing is remembered', storage.get('dsh.greenlight.railCollapsed') === '1', String(storage.get('dsh.greenlight.railCollapsed')))
+  check('the same control is still on screen', railButtons().length === 1, String(railButtons().length))
+  check('it now says it will expand', byAria('展开项目栏') !== null)
+  check('the control keeps its place in the header', railButtons()[0].props.children !== undefined && byClassName('dsh-board__titleRow').length === 1)
+  check('the icon reflects the closed rail', firstToggle.props['aria-expanded'] === 'true')
+
+  click(byAria('展开项目栏'))
+  await settle(200)
+  check('the rail comes back', byClassName('dsh-board__rail').length === 1)
+  check('expanding is remembered', storage.get('dsh.greenlight.railCollapsed') === '0', String(storage.get('dsh.greenlight.railCollapsed')))
+  check('the control is still the only one', railButtons().length === 1, String(railButtons().length))
+  check('project names come back', textOf().includes('甲项目') && textOf().includes('乙项目'))
+
   console.log('\n' + (failures === 0 ? 'ALL ' + checks + ' CHECKS PASSED' : failures + ' of ' + checks + ' CHECKS FAILED'))
   process.exit(failures === 0 ? 0 : 1)
 })().catch((error) => {

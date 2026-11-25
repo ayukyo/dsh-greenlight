@@ -102,6 +102,8 @@ window.__ModuleLoader__.load({
       'sync.recovered': '检测到损坏的看板文件：已另存备份，并以空看板启动',
       'task.dispatchBadWorkspace': '绑定的工作区已不存在，未发送提示词',
       'rail.title': '项目',
+      'rail.collapse': '收起项目栏',
+      'rail.expand': '展开项目栏',
       'rail.countUnit': '个子任务',
       'rail.empty': '还没有项目，先在下面新建一个。',
       'rail.new': '新建项目',
@@ -308,6 +310,8 @@ window.__ModuleLoader__.load({
       'sync.recovered': 'The board file could not be read: it was set aside as a backup and the board started empty',
       'task.dispatchBadWorkspace': 'The pinned workspace no longer exists; nothing was sent',
       'rail.title': 'Projects',
+      'rail.collapse': 'Collapse the project rail',
+      'rail.expand': 'Expand the project rail',
       'rail.countUnit': 'subtasks',
       'rail.empty': 'No projects yet. Create one below.',
       'rail.new': 'New project',
@@ -594,6 +598,31 @@ window.__ModuleLoader__.load({
   align-items: baseline;
   gap: 8px;
   padding: 0 2px;
+}
+/* One control, one place: the rail toggle lives in the header and never moves. */
+.dsh-board__railToggle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  margin-right: 2px;
+  border: 0.5px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font: inherit;
+  cursor: pointer;
+}
+.dsh-board__railToggle:hover {
+  border-color: var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+.dsh-board__railToggle[aria-expanded='true'] {
+  color: var(--dsw-alias-label-secondary);
 }
 .dsh-board__railTitle {
   font-size: 12px;
@@ -2771,6 +2800,31 @@ window.__ModuleLoader__.load({
      * Whether the opt-in auto dispatcher is on for this browser.
      * @returns the stored flag.
      */
+/** localStorage key for the project rail collapse state. */
+    const RAIL_KEY = 'dsh.greenlight.railCollapsed'
+
+    /**
+     * @returns whether the project rail starts collapsed.
+     */
+    function readRailCollapsed() {
+      try {
+        return window.localStorage.getItem(RAIL_KEY) === '1'
+      } catch (error) {
+        return false
+      }
+    }
+
+    /**
+     * @param collapsed - whether the rail is collapsed.
+     */
+    function writeRailCollapsed(collapsed) {
+      try {
+        window.localStorage.setItem(RAIL_KEY, collapsed ? '1' : '0')
+      } catch (error) {
+        /* the rail still toggles for this session */
+      }
+    }
+
     function readAutoFlag() {
       try {
         return window.localStorage.getItem(AUTO_DISPATCH_KEY) === '1'
@@ -2935,6 +2989,35 @@ window.__ModuleLoader__.load({
       h('circle', { key: 'stop', cx: 10, cy: 6.3, r: 1.85, fill: 'currentColor', fillOpacity: 0.22, stroke: 'none' }),
       h('circle', { key: 'wait', cx: 10, cy: 10, r: 1.85, fill: 'currentColor', fillOpacity: 0.45, stroke: 'none' }),
       h('circle', { key: 'go', cx: 10, cy: 13.9, r: 2.05, fill: 'var(--dsw-alias-state-success-primary)', stroke: 'none' }))
+    }
+
+    /**
+     * The rail toggle: a panel with its left column marked when the rail is open.
+     *
+     * One icon in one place — collapsing must never move the control that brings
+     * the rail back, so the button above always sits in the header.
+     * @param props - `{ size, open }`.
+     * @returns the glyph element.
+     */
+    function RailGlyph({ size, open }) {
+      return h('svg', {
+        width: size,
+        height: size,
+        viewBox: '0 0 20 20',
+        fill: 'none',
+        stroke: 'currentColor',
+        strokeWidth: 1.4,
+        strokeLinecap: 'round',
+        strokeLinejoin: 'round',
+        'aria-hidden': true,
+        focusable: 'false',
+        style: { display: 'block' },
+      },
+      h('rect', { key: 'frame', x: 2.6, y: 3.6, width: 14.8, height: 12.8, rx: 2.6 }),
+      h('line', { key: 'split', x1: 8.2, y1: 3.8, x2: 8.2, y2: 16.2, opacity: open ? 1 : 0.45 }),
+      open
+        ? h('rect', { key: 'fill', x: 2.8, y: 3.8, width: 5.3, height: 12.4, rx: 2.4, fill: 'currentColor', stroke: 'none', opacity: 0.9 })
+        : null)
     }
 
     /**
@@ -3929,6 +4012,13 @@ window.__ModuleLoader__.load({
       const autoBusyRef = React.useRef(false)
       const [undo, setUndo] = React.useState(null)
       const [autoOn, setAutoOn] = React.useState(readAutoFlag)
+      const [railCollapsed, setRailCollapsed] = React.useState(readRailCollapsed)
+      const toggleRail = React.useCallback(() => {
+        setRailCollapsed(previous => {
+          writeRailCollapsed(!previous)
+          return !previous
+        })
+      }, [])
       // A pending destructive action, rendered as a modal until answered.
       const [confirming, setConfirming] = React.useState(null)
       /**
@@ -4486,6 +4576,14 @@ window.__ModuleLoader__.load({
         h('header', { className: 'dsh-board__head' },
           h('div', { className: 'dsh-board__headInner' },
             h('div', { className: 'dsh-board__titleRow' },
+              h('button', {
+                type: 'button',
+                className: 'dsh-board__railToggle',
+                'aria-expanded': railCollapsed ? 'false' : 'true',
+                'aria-label': railCollapsed ? t('rail.expand') : t('rail.collapse'),
+                title: railCollapsed ? t('rail.expand') : t('rail.collapse'),
+                onClick: toggleRail,
+              }, h(RailGlyph, { size: 18, open: !railCollapsed })),
               h('span', { className: 'dsh-board__mark', 'aria-hidden': true }, h(BoardGlyph, { size: 20 })),
               h('h1', { className: 'dsh-board__title' }, t('page.title')),
               h('span', {
@@ -4580,7 +4678,7 @@ window.__ModuleLoader__.load({
             }, t('sync.discard')))
           : null,
         h('div', { className: 'dsh-board__body' },
-          h('aside', { className: 'dsh-board__rail' },
+          railCollapsed ? null : h('aside', { className: 'dsh-board__rail' },
             h('div', { className: 'dsh-board__railHead' },
               h('span', { className: 'dsh-board__railTitle' }, t('rail.title')),
               h('span', { className: 'dsh-board__railCount' }, String(projects.length))),
