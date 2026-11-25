@@ -14,7 +14,9 @@ projects and subtasks, each subtask can own a main Session, and when an agent su
 the `greenlight_*` tools it reports **a completion note, verification claims and deliverables** —
 the Host decides whether the card may close.
 
-<img alt="Greenlight board: project rail, project summary, six task columns and the archive" src="docs/board.png" width="900">
+<img alt="Greenlight board: the project-rail toggle beside the title, the project summary with acceptance rules, and the typed references list" src="docs/board.png" width="900">
+
+<img alt="The same page further down: the archive and six task columns, with card reference chips drawn from the project references" src="docs/columns.png" width="900">
 
 ## Why "green light"
 
@@ -87,7 +89,7 @@ greenlight_task_submit {
 3. If the evidence holds and the deliverables exist, the card closes itself. Otherwise it lands in
    **待验收 / review** with the reason spelled out, and a human decides.
 
-## Agent tools (15)
+## Agent tools (14)
 
 | Tool | Purpose |
 |---|---|

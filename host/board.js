@@ -9,7 +9,7 @@
  * Document versions
  *   1 (browser, flat tasks with queued/doing/done)
  *   2–4 (browser, projects with progress percentages)
- *   6 (this module: projects → subtasks with status, shared reference, memory)
+ *   6 (this module: projects → subtasks with status, project references, memory)
  *   7 (priority, due date, tags, references, trash)
  *   8 (automatic acceptance: a completed card is verified first and only lands
  *      in `review` when it cannot be verified, or when the project or the card
@@ -1606,13 +1606,18 @@ export function applyOp(board, op, origin) {
       })
     }
     // The old name of the entry patch is `sharedEntry.patch`; the contract also
-    // spells it `sharedEntry.update`, so both are accepted.
+    // spells it `sharedEntry.update`, so both are accepted. Version 9 sent the
+    // fields at the top level; a wrapped `patch` is read too, because accepting
+    // a shape whose fields would otherwise be dropped is better than a silent
+    // no-op that looks like a successful edit.
     case 'sharedEntry.patch':
     case 'sharedEntry.update': {
+      const source = isRecord(op.patch) ? { ...op, ...op.patch } : op
       const patch = {}
-      if ('name' in op) patch.name = op.name
-      if ('path' in op) patch.value = op.path
-      if ('description' in op) patch.description = op.description
+      if ('name' in source) patch.name = source.name
+      if ('path' in source) patch.value = source.path
+      if ('value' in source) patch.value = source.value
+      if ('description' in source) patch.description = source.description
       return updateReference(project, { referenceId: op.entryId, patch })
     }
     case 'sharedEntry.remove': {

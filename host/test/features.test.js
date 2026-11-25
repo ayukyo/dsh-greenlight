@@ -122,6 +122,12 @@ test('references can be added, patched, referenced and removed', () => {
   assert.equal(applyOp(board, { type: 'sharedEntry.update', projectId: 'p', entryId: 's9', path: 'docs/newer.md' }), null)
   assert.equal(board.projects[0].references.find(entry => entry.id === 's9').value, 'docs/newer.md')
   assert.equal(applyOp(board, { type: 'sharedEntry.patch', projectId: 'p', entryId: 'nope', path: 'x' }), 'unknown_reference')
+  // A wrapped patch is tolerated as well: dropping its fields would look like a
+  // successful edit while changing nothing.
+  assert.equal(applyOp(board, { type: 'sharedEntry.patch', projectId: 'p', entryId: 's9', patch: { name: '旧入口改名' } }), null)
+  assert.equal(board.projects[0].references.find(entry => entry.id === 's9').name, '旧入口改名')
+  assert.equal(applyOp(board, { type: 'sharedEntry.patch', projectId: 'p', entryId: 's9', patch: { path: 'docs/wrapped.md' } }), null)
+  assert.equal(board.projects[0].references.find(entry => entry.id === 's9').value, 'docs/wrapped.md')
   assert.equal(applyOp(board, { type: 'sharedEntry.remove', projectId: 'p', entryId: 's9' }), null)
   assert.equal(board.projects[0].references.some(entry => entry.id === 's9'), false)
 })

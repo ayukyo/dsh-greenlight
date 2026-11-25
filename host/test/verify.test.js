@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { emptyBoard, applyOp } from '../board.js'
+import { emptyBoard, applyOp, applyOps } from '../board.js'
 import { attachVerification, prepareBatch, probeDeliverables } from '../verify.js'
 
 /**
@@ -181,4 +181,34 @@ test('a completion in the same batch sees deliverables declared earlier in that 
   assert.deepEqual(prepared[1].verification.missing, [], 'the probe must see the deliverable the batch just declared')
   assert.deepEqual(prepared[1].verification.unresolved, [])
   assert.equal(prepared[1].verification.checked, true)
+})
+
+test('a sweep in the same batch marks the reference that is actually missing', async () => {
+  const board = emptyBoard()
+  applyOp(board, { type: 'project.add', id: 'p1', name: 'P' })
+  const root = await mkdtemp(join(tmpdir(), 'greenlight-sweep-'))
+  await mkdir(join(root, 'docs'), { recursive: true })
+  await writeFile(join(root, 'docs', 'there.md'), 'x')
+  // The probe contract is a size, with 0 meaning "cannot see it".
+  const probe = async (path) => {
+    try {
+      const info = await stat(path)
+      return info.size
+    } catch (error) {
+      return 0
+    }
+  }
+  const applied = applyOps(board, await prepareBatch(board, [
+    { type: 'project.setAcceptance', projectId: 'p1', rootDir: root },
+    { type: 'reference.add', projectId: 'p1', kind: 'link', name: 'there', value: 'docs/there.md' },
+    { type: 'reference.add', projectId: 'p1', kind: 'link', name: 'gone', value: 'docs/gone.md' },
+    { type: 'project.recheck', projectId: 'p1' },
+  ], { stat: probe }))
+  assert.deepEqual(applied.rejected, [])
+  const references = applied.board.projects[0].references
+  const there = references.find(entry => entry.name === 'there')
+  const gone = references.find(entry => entry.name === 'gone')
+  assert.ok(there && gone, 'both references must exist after the batch')
+  assert.equal(there.staleSince, 0, 'the file that exists must not be flagged')
+  assert.ok(gone.staleSince > 0, 'the file that is missing must be flagged in the same batch')
 })

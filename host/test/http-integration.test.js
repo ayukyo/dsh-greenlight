@@ -62,7 +62,48 @@ async function startBoard() {
   return startServer(createBoardRoutes(store))
 }
 
-test('an oversized body is answered with 413 over a real socket', async () => {
+/**
+ * Whether this process may open a socket to 127.0.0.1.
+ *
+ * Sandboxes that deny loopback connections turn every assertion below into a
+ * timeout instead of a verdict, so the suite probes itself once and skips rather
+ * than reporting a failure the code cannot fix. Probed lazily and memoised so a
+ * machine that allows loopback pays for one extra round trip in total.
+ * @returns {Promise<boolean>} true when a local socket round trip succeeds.
+ */
+let loopbackProbe = null
+async function loopbackAvailable() {
+  if (loopbackProbe !== null) return loopbackProbe
+  const server = createServer((_request, response) => { response.end('ok') })
+  try {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(0, '127.0.0.1', resolve)
+    })
+    const address = server.address()
+    const response = await fetch('http://127.0.0.1:' + address.port + '/')
+    await response.text()
+    loopbackProbe = true
+  } catch (error) {
+    loopbackProbe = false
+  } finally {
+    await new Promise((resolve) => { server.close(resolve) })
+  }
+  return loopbackProbe
+}
+
+/**
+ * @param t - the node:test context, so a blocked sandbox can skip instead of fail.
+ * @returns {Promise<boolean>} false when the test should return immediately.
+ */
+async function requireLoopback(t) {
+  if (await loopbackAvailable()) return true
+  t.skip('loopback TCP is blocked in this environment')
+  return false
+}
+
+test('an oversized body is answered with 413 over a real socket', async (t) => {
+  if (!(await requireLoopback(t))) return
   const server = await startBoard()
   try {
     // A real socket is the point: destroying the request instead of draining it
@@ -84,7 +125,8 @@ test('an oversized body is answered with 413 over a real socket', async () => {
   }
 })
 
-test('GET state answers over a real socket', async () => {
+test('GET state answers over a real socket', async (t) => {
+  if (!(await requireLoopback(t))) return
   const server = await startBoard()
   try {
     const response = await fetch(server.origin + '/greenlight/state')
@@ -97,7 +139,8 @@ test('GET state answers over a real socket', async () => {
   }
 })
 
-test('POST ops round-trips over a real socket and persists to disk', async () => {
+test('POST ops round-trips over a real socket and persists to disk', async (t) => {
+  if (!(await requireLoopback(t))) return
   const server = await startBoard()
   try {
     const forbidden = await fetch(server.origin + '/greenlight/ops', {

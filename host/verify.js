@@ -11,7 +11,7 @@
  */
 import { stat } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
-import { applyOps, findProject, findTask } from './board.js'
+import { applyOps, createId, findProject, findTask } from './board.js'
 
 /**
  * @param path - candidate path.
@@ -121,13 +121,19 @@ export async function probeProject(project, options) {
  */
 export async function prepareOp(board, op, options) {
   if (op === null || typeof op !== 'object') return op
-  if (op.type === 'project.recheck') {
-    const project = typeof op.projectId === 'string' ? findProject(board, op.projectId) : undefined
-    if (project === undefined) return op
+  // An id minted while applying would differ from the one the scratch board handed
+  // a later probe, so a sweep could mark an entry that never lands and miss the one
+  // that does. Pinning it here keeps the prepared batch and the applied batch equal.
+  const pinned = op.type === 'reference.add' && (typeof op.id !== 'string' || op.id === '')
+    ? { ...op, id: createId('ref-') }
+    : op
+  if (pinned.type === 'project.recheck') {
+    const project = typeof pinned.projectId === 'string' ? findProject(board, pinned.projectId) : undefined
+    if (project === undefined) return pinned
     const sweep = await probeProject(project, options)
-    return { ...op, staleEntries: sweep.staleEntries, deliverables: sweep.deliverables }
+    return { ...pinned, staleEntries: sweep.staleEntries, deliverables: sweep.deliverables }
   }
-  return attachVerification(board, op, options)
+  return attachVerification(board, pinned, options)
 }
 
 /**
