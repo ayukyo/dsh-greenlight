@@ -189,6 +189,13 @@ window.__ModuleLoader__.load({
       'rules.rootDirHint': '相对交付物按此目录查找，留空则无法校验相对路径',
       'rules.missing': '交付物缺失',
       'task.deliverables': '交付物',
+      'task.detailsHidden': '详情已折叠：%s',
+      'task.detailEvidence': '完成说明 %s 字',
+      'task.detailClaims': '验证项 %s 条',
+      'task.detailDeliverables': '交付物 %s 个',
+      'task.detailDebt': '未验证 %s 项',
+      'task.detailsShow': '展开详情',
+      'task.detailsHide': '收起详情',
       'task.evidence': '完成说明',
       'task.next': '下一步',
       'task.nextPlaceholder': '下一步做什么',
@@ -406,6 +413,13 @@ window.__ModuleLoader__.load({
       'rules.rootDirHint': 'Relative deliverables resolve here; without it they cannot be checked',
       'rules.missing': 'Missing deliverables',
       'task.deliverables': 'Deliverables',
+      'task.detailsHidden': 'Details collapsed: %s',
+      'task.detailEvidence': 'note %s chars',
+      'task.detailClaims': '%s checks',
+      'task.detailDeliverables': '%s deliverables',
+      'task.detailDebt': '%s unverified',
+      'task.detailsShow': 'Show details',
+      'task.detailsHide': 'Hide details',
       'task.evidence': 'Completion note',
       'task.next': 'Next',
       'task.nextPlaceholder': 'What happens next',
@@ -3304,6 +3318,9 @@ window.__ModuleLoader__.load({
       const [dispatchBusy, setDispatchBusy] = React.useState(false)
       const [dispatchError, setDispatchError] = React.useState('')
       const [claimDraft, setClaimDraft] = React.useState({ what: '', how: '', layer: 'unit', outcome: 'pass' })
+      // A finished card can carry a page of evidence and checks; the card keeps that
+      // folded until someone asks for it, and can fold it again.
+      const [detailOpen, setDetailOpen] = React.useState(false)
 
       const done = task.status === 'done'
       const tone = taskToneOf(task)
@@ -3311,6 +3328,21 @@ window.__ModuleLoader__.load({
       const previous = previousStatusOf(task.status)
       const inReview = task.status === 'review'
       const overdue = isOverdue(task)
+
+      // How much text the finished card would put on screen, and a one-line
+      // description of it for the collapsed state.
+      const detailChars = task.evidence.length
+        + task.reviewReason.length
+        + task.deliverables.join('').length
+        + task.claims.reduce((total, claim) => total + claim.what.length + claim.how.length, 0)
+        + task.pendingVerification.join('').length
+      const longDetail = detailChars > 200 || task.claims.length >= 3 || task.deliverables.length >= 4
+      const detailParts = []
+      if (task.evidence !== '') detailParts.push(fill(t('task.detailEvidence'), String(task.evidence.length)))
+      if (task.claims.length > 0) detailParts.push(fill(t('task.detailClaims'), String(task.claims.length)))
+      if (task.deliverables.length > 0) detailParts.push(fill(t('task.detailDeliverables'), String(task.deliverables.length)))
+      if (task.pendingVerification.length > 0) detailParts.push(fill(t('task.detailDebt'), String(task.pendingVerification.length)))
+      const detailDescriptor = detailParts.join(' · ')
 
       // One button carries both halves of the Session workflow: a card whose
       // Session holds the board context only needs the workspace switched to it,
@@ -3430,28 +3462,51 @@ window.__ModuleLoader__.load({
         ? h('p', { className: 'dsh-board__acceptedNote' },
           task.acceptedBy === 'auto' ? t('task.acceptedAuto') : t('task.acceptedHuman'))
         : null,
-      task.evidence === ''
-        ? null
-        : h('p', { className: 'dsh-board__evidence' }, t('task.evidence') + '：' + task.evidence),
-      task.deliverables.length === 0
-        ? null
-        : h('p', { className: 'dsh-board__deliverables' },
-          t('task.deliverables') + '：' + task.deliverables.join('、'),
-          task.verification !== null && (task.verification.missing.length > 0 || task.verification.unresolved.length > 0)
-            ? h('span', { className: 'dsh-board__missing' },
-              '（' + t('rules.missing') + '：' + task.verification.missing.concat(task.verification.unresolved).join('、') + '）')
-            : null),
-      task.claims.length === 0
-        ? null
-        : h('p', { className: 'dsh-board__claims' },
-          t('task.claims') + '：' + task.claims.map(claim =>
-            (claim.outcome === 'pass' ? '✓' : claim.outcome === 'fail' ? '✗' : '?') + ' ' + claim.what
-            + (claim.layer === undefined ? '' : '（' + t('task.layer.' + claim.layer) + '）')).join('，')),
-      task.pendingVerification.length === 0
-        ? null
-        : h('p', { className: 'dsh-board__debt' },
-          h('span', { className: 'dsh-board__badge', 'data-tone': 'warn' }, t('task.debt') + ' ' + task.pendingVerification.length),
-          ' ' + task.pendingVerification.join('、')),
+      // A finished card is mostly text: a completion note, the checks behind it and
+      // the files it produced. Left open, one card fills the column and pushes the
+      // next one off screen, so the detail folds until it is asked for.
+      longDetail && !detailOpen
+        ? h('div', { key: 'collapsedDetail', className: 'dsh-board__detailCollapsed' },
+          h('p', { className: 'dsh-board__sectionHint' }, fill(t('task.detailsHidden'), detailDescriptor)),
+          h('button', {
+            type: 'button',
+            className: 'dsh-board__ghost',
+            'aria-expanded': false,
+            onClick: () => { setDetailOpen(true) },
+          }, t('task.detailsShow')))
+        : [
+          task.evidence === ''
+            ? null
+            : h('p', { key: 'evidence', className: 'dsh-board__evidence' }, t('task.evidence') + '：' + task.evidence),
+          task.deliverables.length === 0
+            ? null
+            : h('p', { key: 'deliverables', className: 'dsh-board__deliverables' },
+              t('task.deliverables') + '：' + task.deliverables.join('、'),
+              task.verification !== null && (task.verification.missing.length > 0 || task.verification.unresolved.length > 0)
+                ? h('span', { className: 'dsh-board__missing' },
+                  '（' + t('rules.missing') + '：' + task.verification.missing.concat(task.verification.unresolved).join('、') + '）')
+                : null),
+          task.claims.length === 0
+            ? null
+            : h('p', { key: 'claims', className: 'dsh-board__claims' },
+              t('task.claims') + '：' + task.claims.map(claim =>
+                (claim.outcome === 'pass' ? '✓' : claim.outcome === 'fail' ? '✗' : '?') + ' ' + claim.what
+                + (claim.layer === undefined ? '' : '（' + t('task.layer.' + claim.layer) + '）')).join('，')),
+          task.pendingVerification.length === 0
+            ? null
+            : h('p', { key: 'debt', className: 'dsh-board__debt' },
+              h('span', { className: 'dsh-board__badge', 'data-tone': 'warn' }, t('task.debt') + ' ' + task.pendingVerification.length),
+              ' ' + task.pendingVerification.join('、')),
+          longDetail
+            ? h('button', {
+              key: 'hideDetail',
+              type: 'button',
+              className: 'dsh-board__ghost',
+              'aria-expanded': true,
+              onClick: () => { setDetailOpen(false) },
+            }, t('task.detailsHide'))
+            : null,
+        ],
       h('details', { className: 'dsh-board__claimForm' },
         h('summary', null, t('task.claimAdd')),
         h('form', {

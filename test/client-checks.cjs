@@ -2370,6 +2370,61 @@ console.log('\n[46] a version-11 browser mirror migrates to the materials text')
     byAria('有未验证事项就转人工') !== null && byAria('有未验证事项就转人工').props.checked === false,
     byAria('有未验证事项就转人工') && String(byAria('有未验证事项就转人工').props.checked))
 
+  console.log('\n[51] a long finished card folds its detail until asked')
+  const longSeed = (tasks) => ({
+    version: 12,
+    revision: 111,
+    updatedAt: new Date().toISOString(),
+    projects: [{ id: 'p-long', name: '长卡片项目', acceptanceMode: 'auto', materials: '', memory: [], trash: [], tasks }],
+  })
+  const longText = '这是一段很长的完成说明。'.repeat(40)
+  await mount({
+    seedHost: longSeed([{
+      id: 't-long', title: '长文本卡片', status: 'review', progress: 100,
+      evidence: longText,
+      claims: [
+        { what: '验证一', how: '跑了一遍', layer: 'unit', outcome: 'pass' },
+        { what: '验证二', how: '跑了两遍', layer: 'unit', outcome: 'pass' },
+        { what: '验证三', how: '跑了三遍', layer: 'unit', outcome: 'pass' },
+      ],
+      deliverables: ['a.md', 'b.md', 'c.md', 'd.md'],
+      pendingVerification: [],
+    }]),
+  })
+  await settle(400)
+  check('a long card hides its completion note by default',
+    !textOf().includes(longText.slice(0, 60)),
+    textOf().slice(0, 300))
+  check('the collapsed card says what it is hiding',
+    textOf().includes('详情已折叠') && textOf().includes('验证项 3 条'),
+    textOf().slice(0, 300))
+  const showDetail = byButtonText('展开详情')
+  check('the collapsed card offers to expand', showDetail !== null && showDetail.props['aria-expanded'] === false)
+  click(showDetail)
+  await settle(200)
+  check('expanding shows the completion note', textOf().includes(longText.slice(0, 60)), textOf().slice(0, 300))
+  check('expanding shows the checks and deliverables',
+    textOf().includes('验证一') && textOf().includes('a.md') && !textOf().includes('详情已折叠'),
+    textOf().slice(0, 400))
+  const hideDetail = byButtonText('收起详情')
+  check('an expanded card offers to fold again', hideDetail !== null && hideDetail.props['aria-expanded'] === true)
+  click(hideDetail)
+  await settle(200)
+  check('folding again hides the note',
+    !textOf().includes(longText.slice(0, 60)) && textOf().includes('详情已折叠') && byButtonText('展开详情') !== null,
+    textOf().slice(0, 300))
+
+  // A short card keeps everything open: no toggle to click.
+  await mount({
+    seedHost: longSeed([{
+      id: 't-short', title: '短文本卡片', status: 'review', progress: 100,
+      evidence: '短说明', claims: [], deliverables: [], pendingVerification: [],
+    }]),
+  })
+  await settle(400)
+  check('a short card shows its completion note', textOf().includes('短说明'), textOf().slice(0, 300))
+  check('a short card offers no detail toggle', byButtonText('展开详情') === null && !textOf().includes('详情已折叠'))
+
   console.log('\n[50] the two new switches are named in both locales')
   check('the acceptance switch and its chip are localized',
     dictionaries.greenlight.zh['task.requireHuman'] === '需要我验收'
