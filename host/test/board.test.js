@@ -107,6 +107,11 @@ test('percent, tone and counts follow the documented rules', () => {
   assert.equal(projectTone({ tasks: [] }), 'idle')
   assert.equal(projectTone({ tasks: [{ progress: 90, blocked: true }] }), 'red')
   assert.equal(projectTone({ tasks: [{ progress: 90, blocked: false }] }), 'green')
+  // A card waiting in review must not let the project read as finished.
+  assert.equal(projectPercent({ tasks: [{ status: 'review', progress: 100 }] }), 99)
+  assert.equal(projectTone({ tasks: [{ status: 'review', progress: 100, blocked: false }] }), 'yellow')
+  assert.equal(projectPercent({ tasks: [{ status: 'done', progress: 100 }] }), 100)
+  assert.equal(projectTone({ tasks: [{ status: 'done', progress: 100, blocked: false }] }), 'green')
   assert.equal(boardCounts(board).running, 1)
 })
 

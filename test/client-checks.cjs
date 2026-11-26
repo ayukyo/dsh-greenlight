@@ -607,6 +607,16 @@ const fakeCtx = {
   check('blocked forces red', testHelpers.projectTone({ tasks: [{ progress: 100, blocked: true }] }) === 'red')
   check('85% is green', testHelpers.projectTone({ tasks: [{ progress: 85, blocked: false }] }) === 'green')
   check('empty project is idle', testHelpers.projectTone({ tasks: [] }) === 'idle')
+  // Work waiting in review cannot make the project look complete.
+  check('a card in review caps the project below 100%',
+    testHelpers.projectPercent({ tasks: [{ status: 'review', progress: 100 }] }) === 99,
+    String(testHelpers.projectPercent({ tasks: [{ status: 'review', progress: 100 }] })))
+  check('a pending review turns the project yellow',
+    testHelpers.projectTone({ tasks: [{ status: 'review', progress: 100, blocked: false }] }) === 'yellow',
+    testHelpers.projectTone({ tasks: [{ status: 'review', progress: 100, blocked: false }] }))
+  check('only accepted cards reach 100%',
+    testHelpers.projectPercent({ tasks: [{ status: 'done', progress: 100 }] }) === 100,
+    String(testHelpers.projectPercent({ tasks: [{ status: 'done', progress: 100 }] })))
   check('round-trip keeps version 12', JSON.parse(testHelpers.serializeProjects(migrated)).version === 12)
 
   // Version 11 kept the project's structured materials in a `references` list,

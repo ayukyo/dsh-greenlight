@@ -2795,23 +2795,32 @@ window.__ModuleLoader__.load({
      */
     function projectPercent(project) {
       if (project.tasks.length === 0) return 0
+      // A card counts in full only once it is actually done: work waiting in
+      // review is capped just below 100, so the project bar cannot read 100%
+      // while nothing has been accepted.
       let total = 0
-      for (let index = 0; index < project.tasks.length; index += 1) total += project.tasks[index].progress
+      for (let index = 0; index < project.tasks.length; index += 1) {
+        const task = project.tasks[index]
+        total += task.status === 'done' ? 100 : Math.min(task.progress, 99)
+      }
       return Math.round(total / project.tasks.length)
     }
 
     /**
-     * The project's color band: any blocked subtask forces red, otherwise the
-     * average decides — red below 40%, yellow below 80%, green at or above it.
-     * An empty project has no band.
+     * The project's color band: any blocked subtask forces red, work waiting for a
+     * human reads yellow, otherwise the average decides — red below 40%, yellow
+     * below 80%, green at or above it. An empty project has no band.
      * @param project - project to classify.
      * @returns one of 'idle', 'red', 'yellow', 'green'.
      */
     function projectTone(project) {
       if (project.tasks.length === 0) return 'idle'
+      let pendingReview = false
       for (let index = 0; index < project.tasks.length; index += 1) {
         if (project.tasks[index].blocked) return 'red'
+        if (project.tasks[index].status === 'review') pendingReview = true
       }
+      if (pendingReview) return 'yellow'
       const percent = projectPercent(project)
       if (percent >= 80) return 'green'
       if (percent >= 40) return 'yellow'

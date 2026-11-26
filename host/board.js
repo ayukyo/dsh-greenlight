@@ -957,26 +957,35 @@ export function normalizeBoard(raw) {
 
 /**
  * A project's completion: the average of its subtask percentages.
+ *
+ * A card that is not yet `done` cannot contribute a full share, however far its
+ * own bar has been dragged: work waiting in review counts as 99 at most, so the
+ * project only reaches 100% once every card is actually accepted. Without that
+ * cap a single card pushed to review at 100% made an untouched project look
+ * finished.
  * @param project - project to measure.
  * @returns an integer from 0 to 100.
  */
 export function projectPercent(project) {
   if (project.tasks.length === 0) return 0
   let total = 0
-  for (const task of project.tasks) total += task.progress
+  for (const task of project.tasks) {
+    total += task.status === 'done' ? 100 : Math.min(task.progress, 99)
+  }
   return Math.round(total / project.tasks.length)
 }
 
 /**
- * The project's color band: a blocked subtask forces red, otherwise the average
- * decides (red below 40, yellow below 80, green from 80); an empty project has
- * no band.
+ * The project's color band: a blocked subtask forces red, work waiting for a
+ * human reads yellow, otherwise the average decides (red below 40, yellow below
+ * 80, green from 80); an empty project has no band.
  * @param project - project to classify.
  * @returns 'idle' | 'red' | 'yellow' | 'green'.
  */
 export function projectTone(project) {
   if (project.tasks.length === 0) return 'idle'
   if (project.tasks.some(task => task.blocked)) return 'red'
+  if (project.tasks.some(task => task.status === 'review')) return 'yellow'
   const percent = projectPercent(project)
   if (percent >= 80) return 'green'
   if (percent >= 40) return 'yellow'
