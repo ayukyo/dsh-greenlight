@@ -590,6 +590,54 @@ test('subtask operations: add, patch whitelist, move with expected status, remov
   assert.equal(applyOp(board, { type: 'trash.purge', projectId: 'p1', all: true }), null)
 })
 
+test('contextSentAt records whether the card has ever been dispatched', () => {
+  const board = boardWithOneTask()
+  // A stored card that never carried the field reads as "never dispatched".
+  assert.equal(board.projects[0].tasks[0].contextSentAt, 0)
+
+  assert.equal(applyOp(board, { type: 'task.add', projectId: 'p1', id: 't2', title: '新任务' }), null)
+  assert.equal(board.projects[0].tasks[1].contextSentAt, 0, 'a new task starts never dispatched')
+
+  const patch = (value) => applyOp(board, { type: 'task.patch', projectId: 'p1', taskId: 't1', patch: value })
+  assert.equal(patch({ contextSentAt: 123 }), null)
+  assert.equal(board.projects[0].tasks[0].contextSentAt, 123)
+  assert.equal(patch({ contextSentAt: 'yes' }), 'invalid_field')
+  assert.equal(patch({ contextSentAt: -1 }), 'invalid_field')
+  assert.equal(board.projects[0].tasks[0].contextSentAt, 123, 'a refused patch leaves the stored mark alone')
+
+  // Old documents gain the field at its empty value, and a hand-edited
+  // negative value cannot read as "dispatched".
+  const legacy = normalizeBoard({ version: 1, tasks: [{ id: 'a', title: '旧一' }] })
+  assert.equal(legacy.projects[0].tasks[0].contextSentAt, 0)
+  const handEdited = normalizeBoard({
+    version: 12,
+    projects: [{ id: 'p', name: 'P', tasks: [{ id: 't', title: 'T', contextSentAt: -5 }] }],
+  })
+  assert.equal(handEdited.projects[0].tasks[0].contextSentAt, 0)
+
+  // A card stored before the field existed, but already bound to a Session and
+  // past todo, was dispatched: it must offer "open", not "dispatch again".
+  const adopted = normalizeBoard({
+    version: 12,
+    projects: [{
+      id: 'p', name: 'P', materials: '', memory: [], trash: [],
+      tasks: [
+        { id: 'a', title: '已派过', status: 'review', sessionId: 'sess-1', updatedAt: 1700000000000 },
+        { id: 'b', title: '已开始', status: 'running', sessionId: 'sess-2', updatedAt: 1700000000000 },
+        { id: 'c', title: '绑了但没派', status: 'todo', sessionId: 'sess-3', updatedAt: 1700000000000 },
+        { id: 'd', title: '没绑会话', status: 'review', updatedAt: 1700000000000 },
+        { id: 'e', title: '显式记 0', status: 'review', sessionId: 'sess-4', contextSentAt: 0 },
+      ],
+    }],
+  })
+  const adoptedTasks = adopted.projects[0].tasks
+  assert.equal(adoptedTasks[0].contextSentAt, 1700000000000, 'review + bound reads as dispatched')
+  assert.equal(adoptedTasks[1].contextSentAt, 1700000000000, 'running + bound reads as dispatched')
+  assert.equal(adoptedTasks[2].contextSentAt, 0, 'todo + bound still reads as never dispatched')
+  assert.equal(adoptedTasks[3].contextSentAt, 0, 'no Session means nothing was dispatched')
+  assert.equal(adoptedTasks[4].contextSentAt, 0, 'an explicit 0 is respected')
+})
+
 test('memory operations keep only existing subtask links', () => {
   const board = boardWithOneTask()
   assert.equal(applyOp(board, { type: 'memory.add', projectId: 'p1', id: 'm2', text: '第二条', taskId: 't1' }), null)

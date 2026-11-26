@@ -508,6 +508,25 @@ function emptyProject() {
 }
 
 /**
+ * Decide whether a stored card already received the board context.
+ *
+ * Cards written before `contextSentAt` existed carry no value. Falling back to
+ * "never dispatched" would be wrong for the common case - the card already has a
+ * Session and work has started - so those cards are taken as dispatched and only
+ * a card still sitting in todo/backlog (or with no Session at all) reads as new.
+ * @param raw - stored subtask.
+ * @returns timestamp of the last dispatch, or 0 when there was none.
+ */
+function deriveContextSentAt(raw) {
+  if (typeof raw.contextSentAt === 'number' && Number.isFinite(raw.contextSentAt) && raw.contextSentAt >= 0) {
+    return raw.contextSentAt
+  }
+  const bound = typeof raw.sessionId === 'string' && raw.sessionId !== ''
+  const started = typeof raw.status === 'string' && raw.status !== '' && raw.status !== 'todo' && raw.status !== 'backlog'
+  if (!bound || !started) return 0
+  return typeof raw.updatedAt === 'number' && Number.isFinite(raw.updatedAt) ? raw.updatedAt : 1
+}
+/**
  * Normalize one subtask.
  * @param raw - candidate subtask.
  * @returns a normalized subtask, or null when unusable.
@@ -547,6 +566,12 @@ function normalizeTask(raw) {
     sessionId: asString(raw.sessionId),
     workspaceId: asString(raw.workspaceId),
     agentPreset: asString(raw.agentPreset),
+    // When the bound Session last received the board context: 0 means the card
+    // was never dispatched. A document written before this field existed cannot
+    // say either way, so a card that already owns a Session and has moved past
+    // todo is taken as dispatched - otherwise every existing card would offer to
+    // dispatch again and the "open the Session" action would disappear.
+    contextSentAt: deriveContextSentAt(raw),
     createdAt,
     updatedAt: typeof raw.updatedAt === 'number' && Number.isFinite(raw.updatedAt) ? raw.updatedAt : createdAt,
   }
@@ -904,6 +929,7 @@ function migrateV1(list) {
       sessionId: '',
       workspaceId: '',
       agentPreset: '',
+      contextSentAt: 0,
       createdAt: typeof item.createdAt === 'number' && Number.isFinite(item.createdAt) ? item.createdAt : Date.now(),
       updatedAt: Date.now(),
     })
@@ -1220,7 +1246,7 @@ function clearAcceptance(task) {
 /** Subtask fields a patch may touch. */
 const PATCHABLE_TASK_FIELDS = [
   'title', 'titleSource', 'note', 'status', 'progress', 'blocked',
-  'reviewReason', 'sessionId', 'workspaceId', 'agentPreset',
+  'reviewReason', 'sessionId', 'workspaceId', 'agentPreset', 'contextSentAt',
   'priority', 'dueDate', 'tags',
   'evidence', 'deliverables', 'requireHuman',
   'nextAction', 'pendingVerification',
@@ -1263,6 +1289,12 @@ function applyTaskPatch(task, patch) {
   if ('sessionId' in patch) task.sessionId = asString(patch.sessionId)
   if ('workspaceId' in patch) task.workspaceId = asString(patch.workspaceId)
   if ('agentPreset' in patch) task.agentPreset = asString(patch.agentPreset)
+  if ('contextSentAt' in patch) {
+    if (typeof patch.contextSentAt !== 'number' || !Number.isFinite(patch.contextSentAt) || patch.contextSentAt < 0) {
+      return 'invalid_field'
+    }
+    task.contextSentAt = patch.contextSentAt
+  }
   if ('priority' in patch) {
     if (!TASK_PRIORITIES.includes(patch.priority)) return 'invalid_field'
     task.priority = patch.priority
@@ -1419,6 +1451,10 @@ export function applyOp(board, op, origin) {
         sessionId: asString(op.sessionId),
         workspaceId: asString(op.workspaceId),
         agentPreset: asString(op.agentPreset),
+        // A new card has never been dispatched; an undo may restore the mark.
+        contextSentAt: typeof op.contextSentAt === 'number' && Number.isFinite(op.contextSentAt) && op.contextSentAt >= 0
+          ? op.contextSentAt
+          : 0,
         // An undo restores the original timestamps instead of inventing new ones.
         createdAt: typeof op.createdAt === 'number' && Number.isFinite(op.createdAt) ? op.createdAt : createdAt,
         updatedAt: createdAt,

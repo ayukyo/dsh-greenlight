@@ -2132,6 +2132,17 @@ window.__ModuleLoader__.load({
         sessionId: typeof item.sessionId === 'string' ? item.sessionId : '',
         workspaceId: typeof item.workspaceId === 'string' ? item.workspaceId : '',
         agentPreset: typeof item.agentPreset === 'string' ? item.agentPreset : '',
+        // 0 means the bound Session never received the board context. A document
+        // from before the field existed is read the same way the Host reads it:
+        // a card that already has a Session and has moved past todo was
+        // dispatched, so it offers "open" rather than "dispatch again".
+        contextSentAt: (() => {
+          if (typeof item.contextSentAt === 'number' && isFinite(item.contextSentAt) && item.contextSentAt >= 0) return item.contextSentAt
+          const bound = typeof item.sessionId === 'string' && item.sessionId !== ''
+          const started = typeof item.status === 'string' && item.status !== '' && item.status !== 'todo' && item.status !== 'backlog'
+          if (!bound || !started) return 0
+          return typeof item.updatedAt === 'number' && isFinite(item.updatedAt) ? item.updatedAt : 1
+        })(),
         createdAt: typeof item.createdAt === 'number' && isFinite(item.createdAt) ? item.createdAt : Date.now(),
         updatedAt: typeof item.updatedAt === 'number' && isFinite(item.updatedAt) ? item.updatedAt : Date.now(),
       }
@@ -3214,7 +3225,6 @@ window.__ModuleLoader__.load({
     function SessionRow({ task, summary, t, options, busy, actions }) {
       const bound = summary !== null
       const sessionTitle = bound ? (typeof summary.displayTitle === 'string' ? summary.displayTitle : String(summary.id)) : ''
-      const sessionId = task.sessionId
       const canRename = bound && sessionTitle !== '' && sessionTitle !== task.title
 
       const controls = []
@@ -3227,11 +3237,6 @@ window.__ModuleLoader__.load({
         controls.push(h('span', { className: 'dsh-board__sessionTitle', title: sessionTitle }, sessionTitle))
         controls.push(h('span', { className: 'dsh-board__chip', 'data-live': summary.running === true ? 'true' : undefined },
           summary.running === true ? t('task.running') : t('task.idle')))
-        controls.push(h('button', {
-          type: 'button',
-          className: 'dsh-board__ghost',
-          onClick: () => { actions.openSession(sessionId) },
-        }, t('task.openSession')))
         if (canRename) {
           controls.push(h('button', {
             type: 'button',
@@ -3292,7 +3297,7 @@ window.__ModuleLoader__.load({
      * @returns the card element.
      */
     function TaskCard({
-      task, t, linkedMemory, summary, sessionOptions, sessionBusy, sessionError, actions,
+      task, t, linkedMemory, summary, sessionOptions, sessionBusy, sessionError, sessionsAvailable, actions,
     }) {
       const [rejecting, setRejecting] = React.useState(false)
       const [reason, setReason] = React.useState('')
@@ -3307,12 +3312,17 @@ window.__ModuleLoader__.load({
       const inReview = task.status === 'review'
       const overdue = isOverdue(task)
 
-      const dispatch = () => {
+      // One button carries both halves of the Session workflow: a card whose
+      // Session holds the board context only needs the workspace switched to it,
+      // while any other card (unbound, or bound but never dispatched) still needs
+      // the dispatch prompt sent.
+      const armed = task.sessionId !== '' && task.contextSentAt > 0
+      const activate = () => {
         setDispatchBusy(true)
         setDispatchError('')
         const settle = async () => {
           try {
-            await actions.dispatch()
+            await actions.openOrDispatch()
           } catch (error) {
             setDispatchError(messageOf(error))
           } finally {
@@ -3380,10 +3390,10 @@ window.__ModuleLoader__.load({
         h('button', {
           type: 'button',
           className: 'dsh-board__ghost',
-          disabled: dispatchBusy || task.sessionId === '',
-          title: task.sessionId === '' ? t('task.dispatchNoSession') : t('task.dispatchCost'),
-          onClick: dispatch,
-        }, dispatchBusy ? t('task.dispatching') : t('task.dispatch')),
+          disabled: dispatchBusy || (task.sessionId === '' && !sessionsAvailable),
+          title: armed ? t('task.openSession') : (task.sessionId === '' ? t('task.dispatchNoSession') : t('task.dispatchCost')),
+          onClick: activate,
+        }, dispatchBusy ? t('task.dispatching') : armed ? t('task.openSession') : t('task.dispatch')),
         // Only a finished card is worth putting away; archiving work in flight
         // would hide it from the columns without anyone deciding it is done.
         task.status === 'done'
@@ -3608,7 +3618,6 @@ window.__ModuleLoader__.load({
         busy: sessionBusy,
         actions: {
           createSession: actions.createSession,
-          openSession: actions.openSession,
           linkSession: actions.linkSession,
           unbindSession: actions.unbindSession,
           syncTitle: actions.syncTitle,
@@ -3676,7 +3685,7 @@ window.__ModuleLoader__.load({
      * @param props - the selected project, its update callbacks, Session data, and locale seat.
      * @returns the detail element.
      */
-    function ProjectDetail({ project, t, actions, sessionsSnapshot, materialsTyping }) {
+    function ProjectDetail({ project, t, actions, sessionsSnapshot, sessionsAvailable, materialsTyping }) {
       const [describeDraft, setDescribeDraft] = React.useState('')
       const [memoryDraft, setMemoryDraft] = React.useState('')
       const [memoryLink, setMemoryLink] = React.useState('')
@@ -3866,6 +3875,7 @@ window.__ModuleLoader__.load({
         sessionOptions,
         sessionBusy: busyTaskId === task.id,
         sessionError: busyTaskId === '' && sessionError !== '' ? sessionError : '',
+        sessionsAvailable,
         actions: {
           title: (value) => { actions.updateTask(task.id, { title: value, titleSource: 'manual' }) },
           progress: (value) => { actions.updateTask(task.id, { progress: value }) },
@@ -3882,7 +3892,7 @@ window.__ModuleLoader__.load({
           },
           remove: () => { actions.deleteTask(task.id) },
           createSession: () => { createSession(task.id) },
-          openSession: (sessionId) => { actions.openSession(sessionId) },
+          openOrDispatch: () => actions.openOrDispatch(task.id),
           linkSession: (sessionId) => { actions.updateTask(task.id, { sessionId }) },
           unbindSession: () => { actions.updateTask(task.id, { sessionId: '' }) },
           syncTitle: (title) => { actions.updateTask(task.id, { title, titleSource: 'auto' }) },
@@ -3891,7 +3901,6 @@ window.__ModuleLoader__.load({
           confirm: () => { actions.confirmReview(task.id) },
           reject: (reason) => { actions.rejectReview(task.id, reason) },
           reopen: () => { actions.reopenTask(task.id) },
-          dispatch: () => actions.dispatch(task.id),
           archive: () => actions.archiveTask(task.id),
           dragStart: () => { actions.dragStart(task.id, task.status) },
         },
@@ -4278,6 +4287,10 @@ window.__ModuleLoader__.load({
         if (accepted && pending !== null && typeof pending.onConfirm === 'function') pending.onConfirm()
       }
       const sessionsSnapshot = useSessionsSnapshot(services === undefined ? undefined : services.sessions)
+      // Without the Session Controller an unbound card has no Session to create,
+      // so its merged button stays disabled instead of failing on click.
+      const sessionsAvailable = services !== undefined && services !== null
+        && services.sessions !== undefined && services.sessions !== null
 
       const selected = React.useMemo(() => {
         for (let index = 0; index < projects.length; index += 1) {
@@ -4517,6 +4530,7 @@ window.__ModuleLoader__.load({
             progress: 0,
             blocked: false,
             sessionId: '',
+            contextSentAt: 0,
             createdAt: Date.now(),
             updatedAt: Date.now(),
           }
@@ -4589,6 +4603,7 @@ window.__ModuleLoader__.load({
             sessionId: restored.sessionId,
             workspaceId: restored.workspaceId,
             agentPreset: restored.agentPreset,
+            contextSentAt: restored.contextSentAt,
             createdAt: restored.createdAt,
           }])
         },
@@ -4724,12 +4739,16 @@ window.__ModuleLoader__.load({
         reopenTask: (taskId) => {
           actions.moveTask(taskId, 'failed', 'todo')
         },
-        dispatch: async (taskId) => {
+        dispatch: async (taskId, createdSessionId) => {
           if (selectedProjectId === '' || services === undefined || services === null) throw new Error('no service')
           const project = projects.find(entry => entry.id === selectedProjectId)
           const task = project === undefined ? undefined : project.tasks.find(entry => entry.id === taskId)
           if (project === undefined || task === undefined) throw new Error('no task')
-          if (task.sessionId === '') throw new Error('no session')
+          // A Session just created by `openOrDispatch` is handed down: the card's
+          // mirror already carries its id, but this closure still holds the list
+          // from before the create, so re-reading it would find no Session.
+          const sessionId = typeof createdSessionId === 'string' && createdSessionId !== '' ? createdSessionId : task.sessionId
+          if (sessionId === '') throw new Error('no session')
           // Pin check: a task pinned to a workspace that is gone must fail
           // before a prompt is sent, never half-run.
           if (task.workspaceId !== '') {
@@ -4750,9 +4769,9 @@ window.__ModuleLoader__.load({
           }
           let outcome
           if (typeof sessions.using === 'function') {
-            outcome = await sessions.using(task.sessionId, { source: 'greenlight' }, send)
+            outcome = await sessions.using(sessionId, { source: 'greenlight' }, send)
           } else {
-            const reference = sessions.retain(task.sessionId, { source: 'greenlight' })
+            const reference = sessions.retain(sessionId, { source: 'greenlight' })
             try {
               outcome = await send(reference)
             } finally {
@@ -4764,7 +4783,42 @@ window.__ModuleLoader__.load({
             throw new Error(failure !== null && failure !== undefined && typeof failure.message === 'string' ? failure.message : 'prompt refused')
           }
           actions.moveTask(taskId, task.status, 'running')
+          // The Session now holds the board context: record it on the card, both
+          // in the mirror (the button switches at once) and on the Host. The
+          // mirror write re-states the Session id and the move on purpose: this
+          // closure still holds the list from before a Session created moments
+          // ago, and a partial write would drop its binding.
+          const sentAt = Date.now()
+          replaceProject(selectedProjectId, entry => ({
+            ...entry,
+            tasks: entry.tasks.map(item => (item.id === taskId
+              ? { ...item, sessionId, status: 'running', contextSentAt: sentAt, updatedAt: Date.now() }
+              : item)),
+          }))
+          sync.enqueue([{ type: 'task.patch', projectId: selectedProjectId, taskId, patch: { contextSentAt: sentAt } }])
           return true
+        },
+        openOrDispatch: async (taskId) => {
+          if (selectedProjectId !== '') {
+            const project = projects.find(entry => entry.id === selectedProjectId)
+            const task = project === undefined ? undefined : project.tasks.find(entry => entry.id === taskId)
+            if (task === undefined) throw new Error('no task')
+            // Already dispatched: switching to the Session is all that is left, and
+            // sending the prompt again would ask it to start the work twice.
+            if (task.sessionId !== '' && task.contextSentAt > 0) {
+              actions.openSession(task.sessionId)
+              return true
+            }
+            // Bound but never dispatched: the Session exists, so no new one is
+            // created; the prompt goes straight into it.
+            if (task.sessionId !== '') return actions.dispatch(taskId)
+            // Never bound: create the Session first, then dispatch into the id it
+            // returned. Either step failing throws, so the card can say so.
+            const sessionId = await actions.createSession(taskId)
+            if (typeof sessionId !== 'string' || sessionId === '') throw new Error('session create failed')
+            return actions.dispatch(taskId, sessionId)
+          }
+          throw new Error('no project')
         },
         createSession: async (taskId) => {
           if (services === undefined || services === null || services.sessions === undefined) return ''
@@ -5004,6 +5058,7 @@ window.__ModuleLoader__.load({
               t,
               actions: { ...actions, archived: sync.archived || [] },
               sessionsSnapshot,
+              sessionsAvailable,
               materialsTyping,
             })),
         undo === null

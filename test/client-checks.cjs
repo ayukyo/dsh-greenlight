@@ -454,7 +454,7 @@ const dictionaries = {}
 let boundNamespace = ''
 
 /* Fake Session Controller: one mutable list snapshot plus a creator. */
-const sessionState = { ids: [], byId: {}, phase: 'ready', projectionsBySession: {} }
+const sessionState = { ids: [], byId: {}, phase: 'ready', projectionsBySession: {}, createCalls: 0 }
 const openedSessions = []
 const prompted = []
 let nextSessionId = 'sess-new-1'
@@ -485,7 +485,10 @@ const fakeSessions = {
     getSnapshot: () => sessionState,
     subscribe: () => () => {},
   },
-  create: async () => nextSessionId,
+  create: async () => {
+    sessionState.createCalls += 1
+    return nextSessionId
+  },
   using: async (sessionId, options, operation) => operation(fakeReference(sessionId)),
   retain: sessionId => fakeReference(sessionId),
 }
@@ -618,6 +621,23 @@ const fakeCtx = {
     testHelpers.projectPercent({ tasks: [{ status: 'done', progress: 100 }] }) === 100,
     String(testHelpers.projectPercent({ tasks: [{ status: 'done', progress: 100 }] })))
   check('round-trip keeps version 12', JSON.parse(testHelpers.serializeProjects(migrated)).version === 12)
+  // A stored card written before the field existed reads as never dispatched;
+  // a value it does carry survives the local mirror parse.
+  check('the local mirror reads a missing dispatch mark as never dispatched',
+    testHelpers.normalizeTask({ id: 't-legacy', title: '旧卡' }).contextSentAt === 0,
+    String(testHelpers.normalizeTask({ id: 't-legacy', title: '旧卡' }).contextSentAt))
+  check('the local mirror keeps a stored dispatch mark',
+    testHelpers.normalizeTask({ id: 't-marked', title: '派过', contextSentAt: 777 }).contextSentAt === 777,
+    String(testHelpers.normalizeTask({ id: 't-marked', title: '派过', contextSentAt: 777 }).contextSentAt))
+  // A card written before the field existed, already bound and past todo, was
+  // dispatched: the mirror must agree with the Host or the button flickers from
+  // "open" back to "dispatch".
+  check('the mirror takes a bound card past todo as already dispatched',
+    testHelpers.normalizeTask({ id: 't-mig', title: '迁移', status: 'review', sessionId: 'sess-x', updatedAt: 1700000000000 }).contextSentAt === 1700000000000,
+    String(testHelpers.normalizeTask({ id: 't-mig', title: '迁移', status: 'review', sessionId: 'sess-x', updatedAt: 1700000000000 }).contextSentAt))
+  check('the mirror keeps a bound card in todo as never dispatched',
+    testHelpers.normalizeTask({ id: 't-todo', title: '待办', status: 'todo', sessionId: 'sess-x', updatedAt: 1700000000000 }).contextSentAt === 0,
+    String(testHelpers.normalizeTask({ id: 't-todo', title: '待办', status: 'todo', sessionId: 'sess-x', updatedAt: 1700000000000 }).contextSentAt))
 
   // Version 11 kept the project's structured materials in a `references` list,
   // and cards and draft items pointed at its entries; version 12 holds one
@@ -828,10 +848,18 @@ const fakeCtx = {
   click(syncButton)
   doc = stored()
   check('Session title adopted', doc && doc.projects[0].tasks[0].title === '导出超时排查', doc && doc.projects[0].tasks[0].title)
-  const openButton = byButtonText('打开会话')
-  check('open-Session control exists', !!openButton)
-  click(openButton)
-  check('open Session routed to the workspace', openedSessions.filter(id => id === 'sess-new-1').length === 2, JSON.stringify(openedSessions))
+  // The Session row no longer carries its own open control: opening a Session is
+  // the second state of the card's single button, and this card was never
+  // dispatched, so no open control is on screen yet.
+  check('a never-dispatched card offers no open control', byButtonText('打开会话') === null, textOf().slice(0, 300))
+  check('the card still offers dispatch for that Session', byButtonText('派给会话') !== null, textOf().slice(0, 300))
+  const rowAfterCreate = byClassName('dsh-board__sessionRow')[0]
+  const rowButtonTexts = rowAfterCreate === undefined
+    ? []
+    : descendants(rowAfterCreate, []).filter(element => element.type === 'button').map(element => childText(element))
+  check('the Session row keeps its controls and renders no open control of its own',
+    rowButtonTexts.includes('解除关联') && !rowButtonTexts.includes('打开会话'),
+    JSON.stringify(rowButtonTexts))
 
   console.log('\n[12] unbind and link an existing Session')
   click(byButtonText('解除关联'))
@@ -1069,7 +1097,10 @@ const fakeCtx = {
 
   console.log('\n[28] dispatch sends the composed prompt into the Session')
   const sessionless = findAll(element => element.type === 'button' && childText(element) === '派给会话')
-  check('dispatch is disabled without a Session', sessionless.length > 0 && sessionless[0].props.disabled === true, sessionless.length === 0 ? 'no button' : String(sessionless[0].props.disabled))
+  check('every card offers the merged dispatch control', sessionless.length > 0, String(sessionless.length))
+  check('an unbound card can create its own Session, so the control is enabled',
+    sessionless.every(button => button.props.disabled !== true),
+    JSON.stringify(sessionless.map(button => button.props.disabled)))
   sessionState.ids = ['sess-dispatch']
   sessionState.byId = { 'sess-dispatch': { id: 'sess-dispatch', displayTitle: '派活会话', running: false } }
   rerender()
@@ -1093,6 +1124,224 @@ const fakeCtx = {
   check('dispatch prompt ends with the tool instructions', prompted.length === 1 && prompted[0].text.includes('不要自己把卡片标成 done'), prompted.length === 1 ? prompted[0].text.slice(-60) : '')
   check('dispatch prompt carries the real card id', prompted.length === 1 && prompted[0].text.includes('taskId：'), prompted.length === 1 ? prompted[0].text.slice(0, 200) : '')
   check('dispatching clears the missing-context warning', !textOf().includes('这个会话还没收到看板上下文'), textOf().slice(0, 400))
+  check('dispatch records that the Session received the board context',
+    stored().projects[0].tasks.some(task => task.sessionId === 'sess-dispatch' && task.contextSentAt > 0),
+    JSON.stringify(stored().projects[0].tasks.map(task => ({ sessionId: task.sessionId, contextSentAt: task.contextSentAt }))))
+  const openButtonsAfterDispatch = findAll(element => element.type === 'button' && childText(element) === '打开会话')
+  check('the dispatched card button switches to open', openButtonsAfterDispatch.length === 1, String(openButtonsAfterDispatch.length))
+  const sessionRowAfterDispatch = byClassName('dsh-board__sessionRow')[0]
+  check('the open control is the card button, not the Session row',
+    sessionRowAfterDispatch === undefined
+    || findIn(sessionRowAfterDispatch, element => element.type === 'button' && childText(element) === '打开会话') === undefined,
+    textOf().slice(0, 320))
+
+  console.log('\n[28b] one card button: dispatch first, then open the Session')
+  const taskButtonSeed = (tasks) => ({
+    version: 12,
+    revision: 101,
+    updatedAt: new Date().toISOString(),
+    projects: [{
+      id: 'p-one',
+      name: '单按钮项目',
+      acceptanceMode: 'auto',
+      materials: '',
+      memory: [],
+      trash: [],
+      tasks,
+    }],
+  })
+
+  // --- no Session yet: the button creates one, then dispatches into it.
+  sessionState.ids = []
+  sessionState.byId = {}
+  sessionState.createCalls = 0
+  nextSessionId = 'sess-auto-1'
+  prompted.length = 0
+  openedSessions.length = 0
+  await mount({
+    seedHost: taskButtonSeed([{ id: 't-new', title: '还没派过的卡', status: 'todo', progress: 0, sessionId: '', contextSentAt: 0 }]),
+  })
+  await settle(300)
+  const createDispatchButton = byButtonText('派给会话')
+  check('an unbound card shows the dispatch label', createDispatchButton !== null, textOf().slice(0, 240))
+  check('the unbound card shows no open label yet', byButtonText('打开会话') === null, textOf().slice(0, 240))
+  click(createDispatchButton)
+  await flush()
+  // The mirror must switch the button before the Host acknowledges: a partial
+  // optimistic write would drop the Session the create step just bound.
+  const optimisticTask = stored().projects[0].tasks[0]
+  check('the card is armed the moment the prompt is sent',
+    optimisticTask.sessionId === 'sess-auto-1' && optimisticTask.status === 'running' && optimisticTask.contextSentAt > 0,
+    JSON.stringify(optimisticTask))
+  check('the card button says open before the Host answers', byButtonText('打开会话') !== null, textOf().slice(0, 300))
+  await settle(600)
+  await flush()
+  check('clicking dispatch created one Session', sessionState.createCalls === 1, String(sessionState.createCalls))
+  const createdTask = stored().projects[0].tasks[0]
+  check('the created Session is bound to the card', createdTask.sessionId === 'sess-auto-1', createdTask.sessionId)
+  check('the prompt went to the new Session',
+    prompted.length === 1 && prompted[0].sessionId === 'sess-auto-1',
+    JSON.stringify(prompted.map(entry => entry.sessionId)))
+  check('the dispatched card moves to running', createdTask.status === 'running', createdTask.status)
+  check('the card records when the context was sent', createdTask.contextSentAt > 0, String(createdTask.contextSentAt))
+  check('the Host stored the dispatch mark',
+    hostState.board.projects[0].tasks[0].contextSentAt > 0,
+    String(hostState.board.projects[0].tasks[0].contextSentAt))
+  check('the card button now says open', byButtonText('打开会话') !== null, textOf().slice(0, 300))
+  const createdOpenButtons = findAll(element => element.type === 'button' && childText(element) === '打开会话')
+  check('only the card carries the open control', createdOpenButtons.length === 1, String(createdOpenButtons.length))
+  const openedBeforeClick = openedSessions.length
+  click(createdOpenButtons[0])
+  await settle(200)
+  check('opening really switches the workspace to that Session',
+    openedSessions.length === openedBeforeClick + 1 && openedSessions[openedSessions.length - 1] === 'sess-auto-1',
+    JSON.stringify(openedSessions))
+  check('opening sends no prompt again', prompted.length === 1, String(prompted.length))
+  check('opening creates no Session', sessionState.createCalls === 1, String(sessionState.createCalls))
+
+  // --- bound but never dispatched: no new Session, only the prompt.
+  sessionState.ids = ['sess-bound']
+  sessionState.byId = { 'sess-bound': { id: 'sess-bound', displayTitle: '已绑定会话', running: false } }
+  sessionState.createCalls = 0
+  prompted.length = 0
+  openedSessions.length = 0
+  await mount({
+    seedHost: taskButtonSeed([{ id: 't-bound', title: '绑定未派活的卡', status: 'todo', progress: 0, sessionId: 'sess-bound', contextSentAt: 0 }]),
+  })
+  await settle(300)
+  const boundDispatchButton = byButtonText('派给会话')
+  check('a bound but undispatched card shows the dispatch label', boundDispatchButton !== null, textOf().slice(0, 240))
+  check('that card warns its Session has no board context', textOf().includes('这个会话还没收到看板上下文'), textOf().slice(0, 320))
+  click(boundDispatchButton)
+  await flush()
+  const optimisticBoundTask = stored().projects[0].tasks[0]
+  check('the bound card is armed before the Host answers',
+    optimisticBoundTask.status === 'running' && optimisticBoundTask.contextSentAt > 0,
+    JSON.stringify(optimisticBoundTask))
+  await settle(600)
+  await flush()
+  check('dispatching into the bound Session creates no new Session', sessionState.createCalls === 0, String(sessionState.createCalls))
+  check('the bound Session received the prompt',
+    prompted.length === 1 && prompted[0].sessionId === 'sess-bound',
+    JSON.stringify(prompted.map(entry => entry.sessionId)))
+  const boundTask = stored().projects[0].tasks[0]
+  check('the bound card moves to running', boundTask.status === 'running', boundTask.status)
+  check('the bound card records contextSentAt', boundTask.contextSentAt > 0, String(boundTask.contextSentAt))
+  check('the bound card button becomes open', byButtonText('打开会话') !== null, textOf().slice(0, 300))
+
+  // --- already dispatched: the button only switches the workspace.
+  sessionState.ids = ['sess-armed']
+  sessionState.byId = { 'sess-armed': { id: 'sess-armed', displayTitle: '已派活会话', running: false } }
+  sessionState.createCalls = 0
+  prompted.length = 0
+  openedSessions.length = 0
+  await mount({
+    seedHost: taskButtonSeed([{
+      id: 't-armed',
+      title: '已派活的卡',
+      status: 'running',
+      progress: 20,
+      sessionId: 'sess-armed',
+      contextSentAt: Date.now() - 1000,
+    }]),
+  })
+  await settle(300)
+  check('a dispatched card labels its button open',
+    byButtonText('打开会话') !== null && byButtonText('派给会话') === null,
+    textOf().slice(0, 300))
+  const armedOpenButtons = findAll(element => element.type === 'button' && childText(element) === '打开会话')
+  check('exactly one open control is on screen', armedOpenButtons.length === 1, String(armedOpenButtons.length))
+  const armedSessionRow = byClassName('dsh-board__sessionRow')[0]
+  check('the Session row renders no open control of its own',
+    armedSessionRow !== undefined
+    && findIn(armedSessionRow, element => element.type === 'button' && childText(element) === '打开会话') === undefined,
+    textOf().slice(0, 320))
+  const statusStrip = byClassName('dsh-board__taskStatus')[0]
+  check('the open control lives in the card strip',
+    statusStrip !== undefined
+    && findIn(statusStrip, element => element.type === 'button' && childText(element) === '打开会话') !== undefined,
+    textOf().slice(0, 320))
+  click(armedOpenButtons[0])
+  await settle(200)
+  check('open sends no prompt', prompted.length === 0, String(prompted.length))
+  check('open switches to the exact bound Session',
+    openedSessions.length === 1 && openedSessions[0] === 'sess-armed', JSON.stringify(openedSessions))
+  check('open creates no Session', sessionState.createCalls === 0, String(sessionState.createCalls))
+
+  // --- both halves of the create-then-dispatch chain report their failure.
+  sessionState.ids = []
+  sessionState.byId = {}
+  sessionState.createCalls = 0
+  prompted.length = 0
+  openedSessions.length = 0
+  await mount({
+    seedHost: taskButtonSeed([{ id: 't-fail', title: '两步都会失败的卡', status: 'todo', progress: 0, sessionId: '', contextSentAt: 0 }]),
+  })
+  await settle(300)
+  const originalCreateForButton = fakeSessions.create
+  fakeSessions.create = async () => {
+    sessionState.createCalls += 1
+    throw new Error('宿主拒绝创建')
+  }
+  click(byButtonText('派给会话'))
+  await settle(600)
+  await flush()
+  check('a failed Session creation is shown on the card',
+    textOf().includes('派活失败') && textOf().includes('宿主拒绝创建'), textOf().slice(0, 360))
+  check('a failed Session creation sends no prompt', prompted.length === 0, String(prompted.length))
+  check('a failed Session creation leaves the card unbound',
+    stored().projects[0].tasks[0].sessionId === '', stored().projects[0].tasks[0].sessionId)
+  fakeSessions.create = originalCreateForButton
+  const originalUsingForButton = fakeSessions.using
+  fakeSessions.using = async () => ({ ok: false, error: { message: '额度不足' } })
+  nextSessionId = 'sess-refused'
+  click(byButtonText('派给会话'))
+  await settle(600)
+  await flush()
+  check('a failed prompt is shown on the card',
+    textOf().includes('派活失败') && textOf().includes('额度不足'), textOf().slice(0, 360))
+  const refusedTask = stored().projects[0].tasks[0]
+  check('a failed prompt records no contextSentAt', refusedTask.contextSentAt === 0, String(refusedTask.contextSentAt))
+  check('a failed prompt leaves the card in todo', refusedTask.status === 'todo', refusedTask.status)
+  check('the Session created before the failure stays bound', refusedTask.sessionId === 'sess-refused', refusedTask.sessionId)
+  fakeSessions.using = originalUsingForButton
+  check('the merged button reuses the existing locale keys',
+    dictionaries.greenlight.zh['task.dispatch'] === '派给会话'
+    && dictionaries.greenlight.zh['task.openSession'] === '打开会话'
+    && dictionaries.greenlight.zh['task.dispatching'] === '派发中…'
+    && dictionaries.greenlight.en['task.dispatch'] === 'Dispatch to Session'
+    && dictionaries.greenlight.en['task.openSession'] === 'Open Session',
+    JSON.stringify({
+      zhDispatch: dictionaries.greenlight.zh['task.dispatch'],
+      zhOpen: dictionaries.greenlight.zh['task.openSession'],
+      enDispatch: dictionaries.greenlight.en['task.dispatch'],
+      enOpen: dictionaries.greenlight.en['task.openSession'],
+    }))
+
+  // --- without the Session Controller an unbound card cannot create a Session.
+  await settle(600)
+  storage.clear()
+  instances.clear()
+  resetHost()
+  hostState.board = taskButtonSeed([{
+    id: 't-no-service',
+    title: '没有会话服务的卡',
+    status: 'todo',
+    progress: 0,
+    sessionId: '',
+    contextSentAt: 0,
+  }])
+  rootElement = createElement(Page, {
+    t: fakeCtx.locale.bind('greenlight'),
+    closeBoard: () => {},
+    services: { sessions: undefined, workspaces: fakeWorkspaces, uiWorkspace: fakeUiWorkspace },
+  })
+  rerender()
+  await settle(300)
+  const noServiceButton = byButtonText('派给会话')
+  check('an unbound card stays disabled without the Session service',
+    noServiceButton !== null && noServiceButton.props.disabled === true,
+    noServiceButton === null ? 'no button on screen' : String(noServiceButton.props.disabled))
 
   console.log('\n[29] batch C1/C2: drag between columns and undo delete')
   await mount()
