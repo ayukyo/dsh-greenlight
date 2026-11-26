@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here.
 
+## 0.4.1
+
+**派活提示词补上看板上下文**
+- 提示词现在带 `projectId` 与 `taskId`：会话里的 agent 能直接更新**这一张**卡，
+  不用靠标题去猜哪张是它
+- 明确告诉它该调哪些工具：开工 `greenlight_task_update`（置 running）、
+  交付 `greenlight_task_submit`（完成说明 + 验证项 + 交付物）、补资料 `greenlight_materials`、
+  记结论 `greenlight_memory_add`，并写明**不要自己把卡片标成 done**
+- 起因：真实项目里用「新建主会话」绑定卡片后，会话里的 agent 完全不知道看板存在，
+  卡片一直停在「待办」。现在「派给会话」这条路径会把卡片 id 和工具说明一并送过去
+
 ## 0.4.0
 
 **项目资料简化成一个文本框**

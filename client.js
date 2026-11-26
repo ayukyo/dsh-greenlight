@@ -3042,12 +3042,22 @@ window.__ModuleLoader__.load({
 
     /**
      * Build the prompt text that dispatches one subtask into its Session.
+     *
+     * The Session has no idea the board exists unless the prompt says so, and it
+     * cannot call a tool for a card it cannot name: the ids are here so the agent
+     * can update this exact card instead of guessing from the title.
      * @param task - subtask to dispatch.
      * @param project - project the subtask belongs to.
      * @returns the prompt text.
      */
     function buildDispatchPrompt(task, project) {
-      const lines = ['请执行看板上的这个子任务。', '', '标题：' + task.title]
+      const lines = [
+        '请执行看板上的这个子任务。',
+        '',
+        '项目：' + project.name + '（projectId：' + project.id + '）',
+        '卡片：' + task.title,
+        'taskId：' + task.id,
+      ]
       if (task.note !== '') lines.push('说明：' + task.note)
       if (project.materials !== '') {
         lines.push('', '项目资料：', project.materials)
@@ -3057,7 +3067,13 @@ window.__ModuleLoader__.load({
         lines.push('', '相关项目记忆：')
         for (const entry of linked) lines.push('- ' + entry.text)
       }
-      lines.push('', '完成后请把结果写进项目记忆，并把子任务推进到「待验收」。')
+      lines.push(
+        '',
+        '开工时先用 greenlight_task_update 把这张卡片置为 running（可同时写 nextAction）。',
+        '完成后用 greenlight_task_submit 提交完成说明、验证项（claims）与交付物路径，让 Host 自动验收；',
+        '不要自己把卡片标成 done。',
+        '需要补资料时用 greenlight_materials 写回项目资料；有结论时用 greenlight_memory_add 记进项目记忆。',
+      )
       return lines.join('\n')
     }
 

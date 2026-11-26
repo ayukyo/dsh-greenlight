@@ -967,6 +967,8 @@ const fakeCtx = {
   const promptSample = testHelpers.buildDispatchPrompt(
     { id: 't', title: '标题A', note: '说明B', sessionId: 's' },
     {
+      id: 'p',
+      name: '项目P',
       materials: '共享C\n- 文档：docs/spec.md',
       memory: [{ id: 'm', text: '记忆D', taskId: 't' }],
     },
@@ -974,6 +976,17 @@ const fakeCtx = {
   check('dispatch prompt carries title, note, materials and linked memory',
     promptSample.includes('标题A') && promptSample.includes('说明B') && promptSample.includes('共享C') && promptSample.includes('docs/spec.md') && promptSample.includes('记忆D'),
     promptSample.slice(0, 160))
+  // A Session cannot call a tool for a card it cannot name: the ids and the tool
+  // names have to be in the prompt, or the board stays a separate universe.
+  check('dispatch prompt names the project and card ids',
+    promptSample.includes('projectId：p') && promptSample.includes('taskId：t'),
+    promptSample.slice(0, 260))
+  check('dispatch prompt tells the agent which board tools to call',
+    promptSample.includes('greenlight_task_update')
+    && promptSample.includes('greenlight_task_submit')
+    && promptSample.includes('greenlight_materials')
+    && promptSample.includes('不要自己把卡片标成 done'),
+    promptSample.slice(-220))
 
   await mount()
   change(byAria('新建项目'), 'B 批次项目')
@@ -1063,7 +1076,8 @@ const fakeCtx = {
   check('prompt goes through the queue channel', prompted.length === 1 && prompted[0].mode === 'queue')
   check('prompt carries the card title', prompted.length === 1 && prompted[0].text.includes('请执行看板上的这个子任务'), prompted.length === 1 ? prompted[0].text.slice(0, 80) : '')
   check('dispatched card moves to running', stored().projects[0].tasks.some(task => task.sessionId === 'sess-dispatch' && task.status === 'running'), JSON.stringify(stored().projects[0].tasks.map(task => task.status)))
-  check('dispatch prompt ends with the follow-up instruction', prompted.length === 1 && prompted[0].text.includes('完成后请把结果写进项目记忆'), prompted.length === 1 ? prompted[0].text.slice(-60) : '')
+  check('dispatch prompt ends with the tool instructions', prompted.length === 1 && prompted[0].text.includes('不要自己把卡片标成 done'), prompted.length === 1 ? prompted[0].text.slice(-60) : '')
+  check('dispatch prompt carries the real card id', prompted.length === 1 && prompted[0].text.includes('taskId：'), prompted.length === 1 ? prompted[0].text.slice(0, 200) : '')
 
   console.log('\n[29] batch C1/C2: drag between columns and undo delete')
   await mount()
