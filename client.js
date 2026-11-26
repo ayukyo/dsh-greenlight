@@ -191,6 +191,7 @@ window.__ModuleLoader__.load({
       'task.deliverables': '交付物',
       'task.detailsHidden': '详情已折叠：%s',
       'task.detailEvidence': '完成说明 %s 字',
+      'task.detailReason': '验收说明 %s 字',
       'task.detailClaims': '验证项 %s 条',
       'task.detailDeliverables': '交付物 %s 个',
       'task.detailDebt': '未验证 %s 项',
@@ -415,6 +416,7 @@ window.__ModuleLoader__.load({
       'task.deliverables': 'Deliverables',
       'task.detailsHidden': 'Details collapsed: %s',
       'task.detailEvidence': 'note %s chars',
+      'task.detailReason': 'review note %s chars',
       'task.detailClaims': '%s checks',
       'task.detailDeliverables': '%s deliverables',
       'task.detailDebt': '%s unverified',
@@ -1999,6 +2001,186 @@ window.__ModuleLoader__.load({
     grid-template-columns: minmax(0, 1fr);
   }
 }
+/* ------------------------------------------------------- colour and depth
+   The board used to paint one surface everywhere: white section, white card,
+   white column, and a grey chip for every state that was not done. Nothing
+   separated at a glance, and the six columns were indistinguishable.
+
+   Two rules fix that. Every level gets its own ground - the page stays bare,
+   sections sit on a raised surface, columns are tinted by their state, cards
+   are the brightest thing on screen. And every state gets exactly one hue,
+   carried by the card's spine, its status pill, the column head and the count,
+   so a colour means one thing wherever it appears. */
+.dsh-board {
+  --gl-backlog: var(--dsw-alias-label-tertiary);
+  --gl-todo: var(--dsw-alias-state-business-primary);
+  --gl-running: var(--dsw-alias-state-business-primary);
+  --gl-review: var(--dsw-alias-state-warn-primary);
+  --gl-done: var(--dsw-alias-state-success-primary);
+  --gl-failed: var(--dsw-alias-state-error-primary);
+  --gl-hairline: var(--dsw-alias-border-l2);
+}
+/* A card and a column publish the hue of their own state. */
+.dsh-board__task[data-status='backlog'],
+.dsh-board__column[data-status='backlog'] { --gl-state: var(--gl-backlog); }
+.dsh-board__task[data-status='todo'],
+.dsh-board__column[data-status='todo'] { --gl-state: var(--gl-todo); }
+.dsh-board__task[data-status='running'],
+.dsh-board__column[data-status='running'] { --gl-state: var(--gl-running); }
+.dsh-board__task[data-status='review'],
+.dsh-board__column[data-status='review'] { --gl-state: var(--gl-review); }
+.dsh-board__task[data-status='done'],
+.dsh-board__column[data-status='done'] { --gl-state: var(--gl-done); }
+.dsh-board__task[data-status='failed'],
+.dsh-board__column[data-status='failed'] { --gl-state: var(--gl-failed); }
+
+/* Sections are the raised level: they hold the columns, so they stay quiet. */
+.dsh-board__card {
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--dsw-alias-card-fill) 55%, transparent);
+}
+.dsh-board__sectionTitle {
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+/* Columns: tinted by state, with the hue repeated in the head rule and count. */
+.dsh-board__column {
+  background: color-mix(in srgb, var(--gl-state, var(--dsw-alias-label-tertiary)) 4%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--gl-state, var(--gl-hairline)) 16%, transparent);
+  padding: 8px 8px 10px;
+}
+.dsh-board__columnHead {
+  padding: 0 2px 8px;
+  border-bottom: 2px solid color-mix(in srgb, var(--gl-state, var(--gl-hairline)) 45%, transparent);
+}
+.dsh-board__columnTitle {
+  color: var(--dsw-alias-label-primary);
+  font-weight: 600;
+}
+.dsh-board__column[data-status] .dsh-board__dot {
+  background: var(--gl-state);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--gl-state) 22%, transparent);
+}
+.dsh-board__column[data-status] .dsh-board__count {
+  background: color-mix(in srgb, var(--gl-state) 16%, transparent);
+  color: color-mix(in srgb, var(--gl-state) 78%, var(--dsw-alias-label-primary));
+  font-weight: 600;
+}
+
+/* Cards are the front level: brightest surface, a state spine, a real border. */
+.dsh-board__task {
+  border: 1px solid var(--gl-hairline);
+  border-left: 3px solid var(--gl-state, var(--gl-hairline));
+  background: var(--dsw-alias-card-fill);
+  box-shadow: 0 1px 2px color-mix(in srgb, #0f172a 6%, transparent);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.dsh-board__task:hover {
+  border-color: color-mix(in srgb, var(--gl-state, var(--gl-hairline)) 40%, var(--gl-hairline));
+  box-shadow: 0 3px 10px color-mix(in srgb, #0f172a 10%, transparent);
+}
+/* The old inset sliver is replaced by the spine above. */
+.dsh-board__task::before {
+  display: none;
+}
+/* A blocked card says so with the border, not with a second spine. */
+.dsh-board__task[data-blocked='true'] {
+  border-color: var(--dsw-alias-state-error-primary);
+  border-left-color: var(--dsw-alias-state-error-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 4%, var(--dsw-alias-card-fill));
+}
+
+/* The status pill is filled, so the state is legible before the text is read. */
+.dsh-board__pill {
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+.dsh-board__pill[data-status='backlog'] {
+  background: color-mix(in srgb, var(--gl-backlog) 16%, transparent);
+  color: color-mix(in srgb, var(--gl-backlog) 80%, var(--dsw-alias-label-primary));
+}
+.dsh-board__pill[data-status='todo'] {
+  background: color-mix(in srgb, var(--gl-todo) 14%, transparent);
+  color: var(--gl-todo);
+}
+.dsh-board__pill[data-status='running'] {
+  background: color-mix(in srgb, var(--gl-running) 18%, transparent);
+  color: var(--gl-running);
+}
+.dsh-board__pill[data-status='review'] {
+  background: color-mix(in srgb, var(--gl-review) 18%, transparent);
+  color: color-mix(in srgb, var(--gl-review) 85%, var(--dsw-alias-label-primary));
+}
+.dsh-board__pill[data-status='done'] {
+  background: color-mix(in srgb, var(--gl-done) 16%, transparent);
+  color: var(--gl-done);
+}
+.dsh-board__pill[data-status='failed'] {
+  background: color-mix(in srgb, var(--gl-failed) 16%, transparent);
+  color: var(--gl-failed);
+}
+/* The bar under the title follows the same hue. */
+.dsh-board__task .dsh-board__barFill {
+  background: var(--gl-state, var(--dsw-alias-label-tertiary));
+}
+.dsh-board__task[data-blocked='true'] .dsh-board__barFill {
+  background: var(--dsw-alias-state-error-primary);
+}
+
+/* Long detail reads as one quiet block instead of a pile of grey lines. */
+.dsh-board__evidence,
+.dsh-board__claims,
+.dsh-board__deliverables {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border-left: 2px solid color-mix(in srgb, var(--gl-state, var(--gl-hairline)) 45%, transparent);
+  background: color-mix(in srgb, var(--dsw-alias-label-tertiary) 6%, transparent);
+  color: var(--dsw-alias-label-secondary);
+}
+.dsh-board__detailCollapsed {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--dsw-alias-label-tertiary) 8%, transparent);
+}
+.dsh-board__detailCollapsed .dsh-board__sectionHint {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.dsh-board__detailCollapsed .dsh-board__ghost {
+  flex: none;
+  margin-left: auto;
+}
+/* An empty column is a placeholder, not a state: keep it quiet. */
+.dsh-board__column:has(.dsh-board__columnEmpty) {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dsw-alias-border-l1) 60%, transparent);
+}
+.dsh-board__column:has(.dsh-board__columnEmpty) .dsh-board__columnHead {
+  border-bottom-color: color-mix(in srgb, var(--dsw-alias-border-l2) 55%, transparent);
+}
+.dsh-board__columnEmpty {
+  border: 1px dashed color-mix(in srgb, var(--dsw-alias-border-l2) 70%, transparent);
+  border-radius: 10px;
+}
+.dsh-board__detailCollapsed .dsh-board__sectionHint {
+  margin: 0;
+}
+.dsh-board__badge[data-tone='warn'] {
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 18%, transparent);
+}
+.dsh-board__badge[data-tone='error'] {
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 18%, transparent);
+}
+.dsh-board__badge[data-tone='ok'] {
+  background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 18%, transparent);
+}
 `
 
     /* ------------------------------------------------------------------ data */
@@ -3339,6 +3521,7 @@ window.__ModuleLoader__.load({
       const longDetail = detailChars > 200 || task.claims.length >= 3 || task.deliverables.length >= 4
       const detailParts = []
       if (task.evidence !== '') detailParts.push(fill(t('task.detailEvidence'), String(task.evidence.length)))
+      if (task.reviewReason !== '') detailParts.push(fill(t('task.detailReason'), String(task.reviewReason.length)))
       if (task.claims.length > 0) detailParts.push(fill(t('task.detailClaims'), String(task.claims.length)))
       if (task.deliverables.length > 0) detailParts.push(fill(t('task.detailDeliverables'), String(task.deliverables.length)))
       if (task.pendingVerification.length > 0) detailParts.push(fill(t('task.detailDebt'), String(task.pendingVerification.length)))
@@ -3379,9 +3562,10 @@ window.__ModuleLoader__.load({
         'data-done': done ? 'true' : undefined,
         'data-blocked': task.blocked ? 'true' : undefined,
         'data-tone': tone,
+        'data-status': task.status,
       },
       h('div', { className: 'dsh-board__taskStatus' },
-        h('span', { className: 'dsh-board__pill', 'data-tone': tone }, t('status.' + task.status)),
+        h('span', { className: 'dsh-board__pill', 'data-tone': tone, 'data-status': task.status }, t('status.' + task.status)),
         inReview
           ? h('button', {
             type: 'button',
@@ -3452,12 +3636,6 @@ window.__ModuleLoader__.load({
           h('button', { type: 'button', className: 'dsh-board__primary', onClick: submitReject }, t('task.rejectSubmit')),
           h('button', { type: 'button', className: 'dsh-board__ghost', onClick: () => { setRejecting(false) } }, t('task.rejectCancel')))
         : null,
-      task.reviewReason === ''
-        ? null
-        : h('p', { className: 'dsh-board__reviewReason' },
-          (task.acceptance !== null && task.acceptance.pass === false
-            ? t('task.acceptanceBlocked')
-            : t('task.rejectReason')) + '：' + task.reviewReason),
       task.status === 'done' && task.acceptedBy !== ''
         ? h('p', { className: 'dsh-board__acceptedNote' },
           task.acceptedBy === 'auto' ? t('task.acceptedAuto') : t('task.acceptedHuman'))
@@ -3475,6 +3653,12 @@ window.__ModuleLoader__.load({
             onClick: () => { setDetailOpen(true) },
           }, t('task.detailsShow')))
         : [
+          task.reviewReason === ''
+            ? null
+            : h('p', { key: 'reviewReason', className: 'dsh-board__reviewReason' },
+              (task.acceptance !== null && task.acceptance.pass === false
+                ? t('task.acceptanceBlocked')
+                : t('task.rejectReason')) + '：' + task.reviewReason),
           task.evidence === ''
             ? null
             : h('p', { key: 'evidence', className: 'dsh-board__evidence' }, t('task.evidence') + '：' + task.evidence),
