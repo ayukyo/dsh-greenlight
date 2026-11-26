@@ -80,6 +80,8 @@ window.__ModuleLoader__.load({
     const UNDO_WINDOW_MS = 8000
     /** Subtask columns, in board order. */
     const STATUS_ORDER = ['backlog', 'todo', 'running', 'review', 'done', 'failed']
+    /** Cards a column renders before the rest wait behind a "show more" button. */
+    const PAGE = 25
     /** Columns a card flows through when advanced; `failed` is a resting column. */
     const ADVANCE_PATH = ['backlog', 'todo', 'running', 'review', 'done']
     /** Longest title derived from a description. */
@@ -92,6 +94,10 @@ window.__ModuleLoader__.load({
     const MAX_PLAN_TITLE = 200
     /** How much of an item note the draft card shows before cutting it. */
     const PLAN_NOTE_PREVIEW = 80
+// One memory entry can be a paragraph; the list shows the opening of it and the
+// rest on demand. The list itself is paged so a long history does not bury the board.
+const MEMORY_PREVIEW = 120
+const MEMORY_PAGE = 6
     /** Longest materials text a project holds; the Host truncates at the same length. */
     const MAX_MATERIALS_LENGTH = 20000
 
@@ -169,6 +175,7 @@ window.__ModuleLoader__.load({
       'status.done': '已完成',
       'status.failed': '已失败',
       'column.empty': '空',
+      'column.more': '显示更多（还剩 %s 张）',
       'task.advance': '推进到下一列',
       'task.confirmReview': '通过',
       'task.acceptedAuto': '自动通过',
@@ -197,6 +204,8 @@ window.__ModuleLoader__.load({
       'task.detailDebt': '未验证 %s 项',
       'task.detailsShow': '展开详情',
       'task.detailsHide': '收起详情',
+      'task.details': '详情',
+      'task.collapseDetails': '收起详情',
       'task.evidence': '完成说明',
       'task.next': '下一步',
       'task.nextPlaceholder': '下一步做什么',
@@ -318,6 +327,10 @@ window.__ModuleLoader__.load({
       'memory.delete': '删除记忆',
       'memory.edit': '点击编辑',
       'memory.save': '保存',
+      'memory.expand': '展开全文',
+      'memory.collapse': '收起',
+      'memory.more': '显示更多（还剩 %s 条）',
+      'memory.hidden': '已截断',
     }
 
     const en = {
@@ -394,6 +407,7 @@ window.__ModuleLoader__.load({
       'status.done': 'Done',
       'status.failed': 'Failed',
       'column.empty': 'Empty',
+      'column.more': 'Show %s more',
       'task.advance': 'Move to the next column',
       'task.confirmReview': 'Accept',
       'task.acceptedAuto': 'Auto-accepted',
@@ -422,6 +436,8 @@ window.__ModuleLoader__.load({
       'task.detailDebt': '%s unverified',
       'task.detailsShow': 'Show details',
       'task.detailsHide': 'Hide details',
+      'task.details': 'Details',
+      'task.collapseDetails': 'Collapse',
       'task.evidence': 'Completion note',
       'task.next': 'Next',
       'task.nextPlaceholder': 'What happens next',
@@ -543,6 +559,10 @@ window.__ModuleLoader__.load({
       'memory.delete': 'Delete memory entry',
       'memory.edit': 'Click to edit',
       'memory.save': 'Save',
+      'memory.expand': 'Show all',
+      'memory.collapse': 'Collapse',
+      'memory.more': 'Show %s more',
+      'memory.hidden': 'Truncated',
     }
 
     /*
@@ -1720,6 +1740,8 @@ window.__ModuleLoader__.load({
   flex-direction: column;
   gap: 8px;
   min-width: 0;
+  /* A column of forty cards must not stretch the page: it scrolls itself. */
+  max-height: calc(100vh - 380px);
   padding: 8px;
   border-radius: 12px;
   background: var(--dsw-alias-interactive-bg-hover);
@@ -1757,6 +1779,11 @@ window.__ModuleLoader__.load({
   gap: 8px;
   min-height: 36px;
   min-width: 0;
+  /* The cards scroll inside the column; the page keeps its own scroll, so the
+     wheel stops at the column boundary instead of fighting the next one. */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
 }
 .dsh-board__columnEmpty {
   margin: 0;
@@ -2052,8 +2079,19 @@ window.__ModuleLoader__.load({
   padding: 8px 8px 10px;
 }
 .dsh-board__columnHead {
+  /* The head stays put while the cards scroll under it, so it needs an opaque
+     ground: the column tint is only 4% over the page, which would show the
+     cards through. base + the same state tint keeps the hue and hides them. */
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--dsw-alias-bg-base);
+  backdrop-filter: blur(2px);
   padding: 0 2px 8px;
   border-bottom: 2px solid color-mix(in srgb, var(--gl-state, var(--gl-hairline)) 45%, transparent);
+}
+.dsh-board__column[data-status] .dsh-board__columnHead {
+  background: color-mix(in srgb, var(--gl-state) 4%, var(--dsw-alias-bg-base));
 }
 .dsh-board__columnTitle {
   color: var(--dsw-alias-label-primary);
@@ -2163,6 +2201,8 @@ window.__ModuleLoader__.load({
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dsw-alias-border-l1) 60%, transparent);
 }
 .dsh-board__column:has(.dsh-board__columnEmpty) .dsh-board__columnHead {
+  /* Nothing scrolls under an empty column's head, so it stays see-through. */
+  background: transparent;
   border-bottom-color: color-mix(in srgb, var(--dsw-alias-border-l2) 55%, transparent);
 }
 .dsh-board__columnEmpty {
@@ -2180,6 +2220,78 @@ window.__ModuleLoader__.load({
 }
 .dsh-board__badge[data-tone='ok'] {
   background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 18%, transparent);
+}
+
+/* --------------------------------------------------------- compact cards
+   A column holds dozens of cards, so a card shows four short rows by default:
+   its state and title, one line of chips, a progress bar when there is one,
+   and the control that opens the rest. Everything else - priority, dates,
+   tags, the Session row, the check form, the next step - waits unfolded. */
+.dsh-board__taskCompact {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+/* The pill, the review decision, the title and the delete control share one line. */
+.dsh-board__taskCompact .dsh-board__taskTop {
+  gap: 6px;
+}
+.dsh-board__taskCompact .dsh-board__taskTop .dsh-board__pill {
+  flex: none;
+}
+.dsh-board__taskCompact .dsh-board__taskTop .dsh-board__ghost {
+  height: 22px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+.dsh-board__chipRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+/* A Session chip carries the running/idle dot: the folded card still says
+   whether the Session working on it is alive. */
+.dsh-board__chip--session {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 65%;
+}
+.dsh-board__chip--session .dsh-board__sessionTitle {
+  max-width: 110px;
+  font-size: 11px;
+  line-height: 16px;
+  color: inherit;
+  font-weight: 500;
+}
+.dsh-board__taskBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.dsh-board__taskBar .dsh-board__bar {
+  height: 4px;
+}
+.dsh-board__taskActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.dsh-board__taskActions .dsh-board__ghost {
+  height: 22px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+/* Paging a column: the button sits under the last rendered card. */
+.dsh-board__cards .dsh-board__more {
+  flex: none;
+  width: 100%;
+  height: 26px;
 }
 `
 
@@ -3487,6 +3599,44 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * One status column: its head, its own scrolling card area, and a pager.
+     *
+     * A real project has dozens of cards in a column, so each column renders
+     * one page and offers the rest behind a button; the count is per column.
+     * @param props - the status, its cards, the locale seat, the drop callback, and the card renderer.
+     * @returns the column element.
+     */
+    function StatusColumn({ status, items, t, onDrop, renderTaskCard }) {
+      const [shown, setShown] = React.useState(PAGE)
+      const visible = items.slice(0, shown)
+      const remaining = items.length - visible.length
+
+      return h('section', {
+        className: 'dsh-board__column',
+        'data-status': status,
+        onDragOver: (event) => {
+          if (event !== null && event !== undefined && typeof event.preventDefault === 'function') event.preventDefault()
+        },
+        onDrop,
+      },
+      h('header', { className: 'dsh-board__columnHead' },
+        h('span', { className: 'dsh-board__dot', 'data-tone': taskToneOf({ status, blocked: false }), 'aria-hidden': true }),
+        h('span', { className: 'dsh-board__columnTitle' }, t('status.' + status)),
+        h('span', { className: 'dsh-board__count' }, String(items.length))),
+      h('div', { className: 'dsh-board__cards' },
+        items.length === 0
+          ? h('p', { className: 'dsh-board__columnEmpty' }, t('column.empty'))
+          : visible.map(renderTaskCard),
+        remaining === 0
+          ? null
+          : h('button', {
+            type: 'button',
+            className: 'dsh-board__ghost dsh-board__more',
+            onClick: () => { setShown(shown + PAGE) },
+          }, fill(t('column.more'), String(remaining)))))
+    }
+
+    /**
      * One subtask card: its column, title, advance/review/dispatch controls,
      * progress slider, blocked switch, description, and its main Session.
      * @param props - the subtask, its callbacks, and its Session state.
@@ -3500,6 +3650,9 @@ window.__ModuleLoader__.load({
       const [dispatchBusy, setDispatchBusy] = React.useState(false)
       const [dispatchError, setDispatchError] = React.useState('')
       const [claimDraft, setClaimDraft] = React.useState({ what: '', how: '', layer: 'unit', outcome: 'pass' })
+      // The card is folded by default: a column of forty cards must read as a
+      // list, not as forty forms.
+      const [expanded, setExpanded] = React.useState(false)
       // A finished card can carry a page of evidence and checks; the card keeps that
       // folded until someone asks for it, and can fold it again.
       const [detailOpen, setDetailOpen] = React.useState(false)
@@ -3555,6 +3708,53 @@ window.__ModuleLoader__.load({
         setReason('')
       }
 
+      // The folded card keeps one line of chips: what is worth knowing before
+      // the card is opened. Everything else waits in the details.
+      const metadataChips = []
+      if (task.priority !== 'normal') {
+        metadataChips.push(h('span', { key: 'priority', className: 'dsh-board__chip' }, t('priority.' + task.priority)))
+      }
+      if (task.dueDate !== '') {
+        metadataChips.push(h('span', {
+          key: 'due',
+          className: overdue ? 'dsh-board__chip dsh-board__chip--overdue' : 'dsh-board__chip',
+        }, task.dueDate))
+      }
+      if (task.blocked === true) {
+        metadataChips.push(h('span', { key: 'blocked', className: 'dsh-board__chip' }, t('task.blocked')))
+      }
+      if (task.requireHuman === true) {
+        metadataChips.push(h('span', { key: 'requireHuman', className: 'dsh-board__chip' }, t('task.requireHumanChip')))
+      }
+      // A bound Session is part of the card's state, not its detail: the folded
+      // card carries its title and the running/idle dot.
+      if (task.sessionId !== '') {
+        const bound = summary !== null && summary !== undefined
+        const running = bound && summary.running === true
+        const sessionTitle = bound
+          ? (typeof summary.displayTitle === 'string' && summary.displayTitle !== '' ? summary.displayTitle : String(summary.id))
+          : task.sessionId
+        metadataChips.push(h('span', {
+          key: 'session',
+          className: 'dsh-board__chip dsh-board__chip--session',
+          'data-live': running ? 'true' : undefined,
+          title: running ? t('task.running') : t('task.idle'),
+        },
+        h('span', { className: 'dsh-board__dot', 'data-tone': running ? 'green' : 'idle', 'aria-hidden': true }),
+        h('span', { className: 'dsh-board__sessionTitle' }, sessionTitle)))
+      }
+
+      // A card with no progress and no running Session has nothing to draw.
+      const showProgress = task.progress > 0 || task.status === 'running'
+
+      /** @returns the control that opens (or folds) the details. */
+      const detailsToggle = () => h('button', {
+        type: 'button',
+        className: 'dsh-board__ghost dsh-board__detailsToggle',
+        'aria-expanded': expanded,
+        onClick: () => { setExpanded(!expanded) },
+      }, expanded ? t('task.collapseDetails') : t('task.details'))
+
       return h('article', {
         className: 'dsh-board__task',
         draggable: true,
@@ -3564,306 +3764,336 @@ window.__ModuleLoader__.load({
         'data-tone': tone,
         'data-status': task.status,
       },
-      h('div', { className: 'dsh-board__taskStatus' },
-        h('span', { className: 'dsh-board__pill', 'data-tone': tone, 'data-status': task.status }, t('status.' + task.status)),
-        inReview
-          ? h('button', {
-            type: 'button',
-            className: 'dsh-board__ghost',
-            onClick: () => { actions.confirm() },
-          }, t('task.confirmReview'))
-          : null,
-        inReview
-          ? h('button', {
-            type: 'button',
-            className: 'dsh-board__ghost',
-            onClick: () => { setRejecting(!rejecting) },
-          }, t('task.rejectReview'))
-          : null,
-        !inReview && next !== '' && task.status !== 'review'
-          ? h('button', {
-            type: 'button',
-            className: 'dsh-board__ghost',
-            title: t('task.advance'),
-            onClick: () => { actions.advance() },
-          }, '\u2192')
-          : null,
-        previous !== '' && !inReview
-          ? h('button', {
-            type: 'button',
-            className: 'dsh-board__ghost',
-            title: t('task.back'),
-            onClick: () => { actions.back() },
-          }, '\u2190')
-          : null,
-        task.status === 'failed'
-          ? h('button', {
-            type: 'button',
-            className: 'dsh-board__ghost',
-            onClick: () => { actions.reopen() },
-          }, t('task.reopen'))
-          : null,
-        h('button', {
-          type: 'button',
-          className: 'dsh-board__ghost',
-          disabled: dispatchBusy || (task.sessionId === '' && !sessionsAvailable),
-          title: armed ? t('task.openSession') : (task.sessionId === '' ? t('task.dispatchNoSession') : t('task.dispatchCost')),
-          onClick: activate,
-        }, dispatchBusy ? t('task.dispatching') : armed ? t('task.openSession') : t('task.dispatch')),
-        // Only a finished card is worth putting away; archiving work in flight
-        // would hide it from the columns without anyone deciding it is done.
-        task.status === 'done'
-          ? h('button', {
-            type: 'button',
-            className: 'dsh-board__ghost',
-            title: t('task.archiveHint'),
-            onClick: () => { actions.archive() },
-          }, t('task.archive'))
-          : null,
-        task.sessionId === ''
-          ? null
-          : h('span', { className: 'dsh-board__sessionLabel' }, t('task.dispatchCost'))),
-      rejecting
-        ? h('div', { className: 'dsh-board__rejectRow' },
-          h('input', {
-            className: 'dsh-board__input',
-            type: 'text',
-            value: reason,
-            placeholder: t('task.rejectReason'),
-            'aria-label': t('task.rejectReason'),
-            onChange: (event) => { setReason(event.target.value) },
-          }),
-          h('button', { type: 'button', className: 'dsh-board__primary', onClick: submitReject }, t('task.rejectSubmit')),
-          h('button', { type: 'button', className: 'dsh-board__ghost', onClick: () => { setRejecting(false) } }, t('task.rejectCancel')))
-        : null,
-      task.status === 'done' && task.acceptedBy !== ''
-        ? h('p', { className: 'dsh-board__acceptedNote' },
-          task.acceptedBy === 'auto' ? t('task.acceptedAuto') : t('task.acceptedHuman'))
-        : null,
-      // A finished card is mostly text: a completion note, the checks behind it and
-      // the files it produced. Left open, one card fills the column and pushes the
-      // next one off screen, so the detail folds until it is asked for.
-      longDetail && !detailOpen
-        ? h('div', { key: 'collapsedDetail', className: 'dsh-board__detailCollapsed' },
-          h('p', { className: 'dsh-board__sectionHint' }, fill(t('task.detailsHidden'), detailDescriptor)),
-          h('button', {
-            type: 'button',
-            className: 'dsh-board__ghost',
-            'aria-expanded': false,
-            onClick: () => { setDetailOpen(true) },
-          }, t('task.detailsShow')))
-        : [
-          task.reviewReason === ''
-            ? null
-            : h('p', { key: 'reviewReason', className: 'dsh-board__reviewReason' },
-              (task.acceptance !== null && task.acceptance.pass === false
-                ? t('task.acceptanceBlocked')
-                : t('task.rejectReason')) + '：' + task.reviewReason),
-          task.evidence === ''
-            ? null
-            : h('p', { key: 'evidence', className: 'dsh-board__evidence' }, t('task.evidence') + '：' + task.evidence),
-          task.deliverables.length === 0
-            ? null
-            : h('p', { key: 'deliverables', className: 'dsh-board__deliverables' },
-              t('task.deliverables') + '：' + task.deliverables.join('、'),
-              task.verification !== null && (task.verification.missing.length > 0 || task.verification.unresolved.length > 0)
-                ? h('span', { className: 'dsh-board__missing' },
-                  '（' + t('rules.missing') + '：' + task.verification.missing.concat(task.verification.unresolved).join('、') + '）')
-                : null),
-          task.claims.length === 0
-            ? null
-            : h('p', { key: 'claims', className: 'dsh-board__claims' },
-              t('task.claims') + '：' + task.claims.map(claim =>
-                (claim.outcome === 'pass' ? '✓' : claim.outcome === 'fail' ? '✗' : '?') + ' ' + claim.what
-                + (claim.layer === undefined ? '' : '（' + t('task.layer.' + claim.layer) + '）')).join('，')),
-          task.pendingVerification.length === 0
-            ? null
-            : h('p', { key: 'debt', className: 'dsh-board__debt' },
-              h('span', { className: 'dsh-board__badge', 'data-tone': 'warn' }, t('task.debt') + ' ' + task.pendingVerification.length),
-              ' ' + task.pendingVerification.join('、')),
-          longDetail
+      // Folded, a card is four short rows: state and title, one line of chips,
+      // the progress bar when there is one, and the way into the rest. The
+      // review decision stays on the folded card: it is what the card waits for.
+      h('div', { className: 'dsh-board__taskCompact' },
+        h('div', { className: 'dsh-board__taskTop' },
+          h('span', { className: 'dsh-board__pill', 'data-tone': tone, 'data-status': task.status }, t('status.' + task.status)),
+          inReview
             ? h('button', {
-              key: 'hideDetail',
               type: 'button',
               className: 'dsh-board__ghost',
-              'aria-expanded': true,
-              onClick: () => { setDetailOpen(false) },
-            }, t('task.detailsHide'))
+              onClick: () => { actions.confirm() },
+            }, t('task.confirmReview'))
             : null,
-        ],
-      h('details', { className: 'dsh-board__claimForm' },
-        h('summary', null, t('task.claimAdd')),
-        h('form', {
-          onSubmit: (event) => {
-            event.preventDefault()
-            const what = claimDraft.what.trim()
-            if (what === '') return
-            actions.addClaim({
-              what,
-              how: claimDraft.how.trim(),
-              layer: claimDraft.layer,
-              outcome: claimDraft.outcome,
-            })
-            setClaimDraft({ what: '', how: '', layer: 'unit', outcome: 'pass' })
-          },
-        },
-        h('input', {
-          className: 'dsh-board__input dsh-board__input--compact',
-          type: 'text',
-          value: claimDraft.what,
-          placeholder: t('task.claimWhat'),
-          'aria-label': t('task.claimWhat'),
-          onChange: (event) => { setClaimDraft({ ...claimDraft, what: event.target.value }) },
-        }),
-        h('input', {
-          className: 'dsh-board__input dsh-board__input--compact',
-          type: 'text',
-          value: claimDraft.how,
-          placeholder: t('task.claimHow'),
-          'aria-label': t('task.claimHow'),
-          onChange: (event) => { setClaimDraft({ ...claimDraft, how: event.target.value }) },
-        }),
-        h('select', {
-          className: 'dsh-board__select',
-          value: claimDraft.layer,
-          'aria-label': t('task.claimLayer'),
-          onChange: (event) => { setClaimDraft({ ...claimDraft, layer: event.target.value }) },
-        }, LAYERS.map(layer => h('option', { key: layer, value: layer }, t('task.layer.' + layer)))),
-        h('select', {
-          className: 'dsh-board__select',
-          value: claimDraft.outcome,
-          'aria-label': t('task.claimOutcome'),
-          onChange: (event) => { setClaimDraft({ ...claimDraft, outcome: event.target.value }) },
-        },
-        h('option', { value: 'pass' }, t('task.claimPass')),
-        h('option', { value: 'fail' }, t('task.claimFail')),
-        h('option', { value: 'unverified' }, t('task.claimUnverified'))),
-        h('button', { type: 'submit', className: 'dsh-board__ghost' }, t('task.claimSubmit')))),
-      h('div', { className: 'dsh-board__nextRow' },
-        h('span', { className: 'dsh-board__sectionHint dsh-board__nextLabel' }, t('task.next')),
-        h('input', {
-          className: 'dsh-board__input dsh-board__input--compact',
-          type: 'text',
-          value: task.nextAction,
-          placeholder: t('task.nextPlaceholder'),
-          'aria-label': t('task.next'),
-          onChange: (event) => { actions.nextAction(event.target.value) },
-        })),
-      task.events.length === 0
-        ? null
-        : h('details', { className: 'dsh-board__events' },
-          h('summary', null, t('task.events') + ' ' + task.events.length),
-          h('ul', null,
-            task.events.slice(-8).map((event, index) =>
-              h('li', { key: index },
-                new Date(event.at).toLocaleString() + ' · ' + event.kind
-                + (event.from === '' ? '' : ' ' + event.from + '→' + event.to)
-                + (event.note === '' ? '' : ' · ' + event.note))))),
-      h('div', { className: 'dsh-board__taskTop' },
-        h('input', {
-          className: 'dsh-board__taskTitle',
-          type: 'text',
-          value: task.title,
-          'aria-label': t('task.title'),
-          placeholder: t('task.untitled'),
-          title: task.titleSource === 'auto' ? t('task.describe') : t('task.title'),
-          onChange: (event) => { actions.title(event.target.value) },
-          onBlur: (event) => {
-            if (event.target.value.trim() === '') actions.title(t('task.untitled'))
-          },
-        }),
-        linkedMemory > 0
-          ? h('span', { className: 'dsh-board__chip' }, String(linkedMemory) + ' ' + t('task.linkedMemory'))
-          : null,
-        task.requireHuman
-          ? h('span', { className: 'dsh-board__chip' }, t('task.requireHumanChip'))
-          : null,
-        h('button', {
-          type: 'button',
-          className: 'dsh-board__delete',
-          'aria-label': t('task.delete'),
-          title: t('task.delete'),
-          onClick: () => { actions.remove() },
-        }, '\u00d7')),
-      h('div', { className: 'dsh-board__taskMeta' },
-        h('input', {
-          className: 'dsh-board__range',
-          type: 'range',
-          min: 0,
-          max: 100,
-          step: 5,
-          value: task.progress,
-          'aria-label': t('detail.progress'),
-          onChange: (event) => { actions.progress(clampPercent(Number(event.target.value), task.progress)) },
-        }),
-        h('span', { className: 'dsh-board__taskPercent' }, task.progress + '%'),
-        h('label', { className: 'dsh-board__check' },
+          inReview
+            ? h('button', {
+              type: 'button',
+              className: 'dsh-board__ghost',
+              onClick: () => { setRejecting(!rejecting) },
+            }, t('task.rejectReview'))
+            : null,
           h('input', {
-            type: 'checkbox',
-            checked: task.blocked,
-            'aria-label': t('task.blocked'),
-            onChange: (event) => { actions.blocked(event.target.checked) },
+            className: 'dsh-board__taskTitle',
+            type: 'text',
+            value: task.title,
+            'aria-label': t('task.title'),
+            placeholder: t('task.untitled'),
+            title: task.titleSource === 'auto' ? t('task.describe') : t('task.title'),
+            onChange: (event) => { actions.title(event.target.value) },
+            onBlur: (event) => {
+              if (event.target.value.trim() === '') actions.title(t('task.untitled'))
+            },
           }),
-          t('task.blocked')),
-        h('label', { className: 'dsh-board__check' },
+          h('button', {
+            type: 'button',
+            className: 'dsh-board__delete',
+            'aria-label': t('task.delete'),
+            title: t('task.delete'),
+            onClick: () => { actions.remove() },
+          }, '\u00d7')),
+        metadataChips.length === 0
+          ? null
+          : h('div', { className: 'dsh-board__chipRow' }, metadataChips),
+        showProgress
+          ? h('div', { className: 'dsh-board__taskBar' },
+            h('span', {
+              className: 'dsh-board__bar',
+              role: 'progressbar',
+              'aria-valuenow': task.progress,
+              'aria-valuemin': 0,
+              'aria-valuemax': 100,
+            }, h('span', { className: 'dsh-board__barFill', style: { width: task.progress + '%' } })),
+            h('span', { className: 'dsh-board__taskPercent' }, task.progress + '%'))
+          : null,
+        // Rejecting is a decision, not a detail: the reason field opens right
+        // under the folded card, next to the button that started it.
+        rejecting
+          ? h('div', { className: 'dsh-board__rejectRow' },
+            h('input', {
+              className: 'dsh-board__input',
+              type: 'text',
+              value: reason,
+              placeholder: t('task.rejectReason'),
+              'aria-label': t('task.rejectReason'),
+              onChange: (event) => { setReason(event.target.value) },
+            }),
+            h('button', { type: 'button', className: 'dsh-board__primary', onClick: submitReject }, t('task.rejectSubmit')),
+            h('button', { type: 'button', className: 'dsh-board__ghost', onClick: () => { setRejecting(false) } }, t('task.rejectCancel')))
+          : null,
+        expanded
+          ? null
+          : h('div', { className: 'dsh-board__taskActions' }, detailsToggle())),
+      expanded
+        ? [
+          // Everything the folded card holds back, in the order it always had.
+          h('div', { key: 'actions', className: 'dsh-board__taskStatus' },
+            !inReview && next !== '' && task.status !== 'review'
+              ? h('button', {
+                type: 'button',
+                className: 'dsh-board__ghost',
+                title: t('task.advance'),
+                onClick: () => { actions.advance() },
+              }, '\u2192')
+              : null,
+            previous !== '' && !inReview
+              ? h('button', {
+                type: 'button',
+                className: 'dsh-board__ghost',
+                title: t('task.back'),
+                onClick: () => { actions.back() },
+              }, '\u2190')
+              : null,
+            task.status === 'failed'
+              ? h('button', {
+                type: 'button',
+                className: 'dsh-board__ghost',
+                onClick: () => { actions.reopen() },
+              }, t('task.reopen'))
+              : null,
+            h('button', {
+              type: 'button',
+              className: 'dsh-board__ghost',
+              disabled: dispatchBusy || (task.sessionId === '' && !sessionsAvailable),
+              title: armed ? t('task.openSession') : (task.sessionId === '' ? t('task.dispatchNoSession') : t('task.dispatchCost')),
+              onClick: activate,
+            }, dispatchBusy ? t('task.dispatching') : armed ? t('task.openSession') : t('task.dispatch')),
+            // Only a finished card is worth putting away; archiving work in flight
+            // would hide it from the columns without anyone deciding it is done.
+            task.status === 'done'
+              ? h('button', {
+                type: 'button',
+                className: 'dsh-board__ghost',
+                title: t('task.archiveHint'),
+                onClick: () => { actions.archive() },
+              }, t('task.archive'))
+              : null,
+            task.sessionId === ''
+              ? null
+              : h('span', { className: 'dsh-board__sessionLabel' }, t('task.dispatchCost'))),
+          task.status === 'done' && task.acceptedBy !== ''
+            ? h('p', { key: 'acceptedNote', className: 'dsh-board__acceptedNote' },
+              task.acceptedBy === 'auto' ? t('task.acceptedAuto') : t('task.acceptedHuman'))
+            : null,
+          // A finished card is mostly text: a completion note, the checks behind it and
+          // the files it produced. Left open, one card fills the column and pushes the
+          // next one off screen, so the detail folds until it is asked for.
+          longDetail && !detailOpen
+            ? h('div', { key: 'collapsedDetail', className: 'dsh-board__detailCollapsed' },
+              h('p', { className: 'dsh-board__sectionHint' }, fill(t('task.detailsHidden'), detailDescriptor)),
+              h('button', {
+                type: 'button',
+                className: 'dsh-board__ghost',
+                'aria-expanded': false,
+                onClick: () => { setDetailOpen(true) },
+              }, t('task.detailsShow')))
+            : [
+              task.reviewReason === ''
+                ? null
+                : h('p', { key: 'reviewReason', className: 'dsh-board__reviewReason' },
+                  (task.acceptance !== null && task.acceptance.pass === false
+                    ? t('task.acceptanceBlocked')
+                    : t('task.rejectReason')) + '：' + task.reviewReason),
+              task.evidence === ''
+                ? null
+                : h('p', { key: 'evidence', className: 'dsh-board__evidence' }, t('task.evidence') + '：' + task.evidence),
+              task.deliverables.length === 0
+                ? null
+                : h('p', { key: 'deliverables', className: 'dsh-board__deliverables' },
+                  t('task.deliverables') + '：' + task.deliverables.join('、'),
+                  task.verification !== null && (task.verification.missing.length > 0 || task.verification.unresolved.length > 0)
+                    ? h('span', { className: 'dsh-board__missing' },
+                      '（' + t('rules.missing') + '：' + task.verification.missing.concat(task.verification.unresolved).join('、') + '）')
+                    : null),
+              task.claims.length === 0
+                ? null
+                : h('p', { key: 'claims', className: 'dsh-board__claims' },
+                  t('task.claims') + '：' + task.claims.map(claim =>
+                    (claim.outcome === 'pass' ? '✓' : claim.outcome === 'fail' ? '✗' : '?') + ' ' + claim.what
+                    + (claim.layer === undefined ? '' : '（' + t('task.layer.' + claim.layer) + '）')).join('，')),
+              task.pendingVerification.length === 0
+                ? null
+                : h('p', { key: 'debt', className: 'dsh-board__debt' },
+                  h('span', { className: 'dsh-board__badge', 'data-tone': 'warn' }, t('task.debt') + ' ' + task.pendingVerification.length),
+                  ' ' + task.pendingVerification.join('、')),
+              longDetail
+                ? h('button', {
+                  key: 'hideDetail',
+                  type: 'button',
+                  className: 'dsh-board__ghost',
+                  'aria-expanded': true,
+                  onClick: () => { setDetailOpen(false) },
+                }, t('task.detailsHide'))
+                : null,
+            ],
+          h('details', { key: 'claimForm', className: 'dsh-board__claimForm' },
+            h('summary', null, t('task.claimAdd')),
+            h('form', {
+              onSubmit: (event) => {
+                event.preventDefault()
+                const what = claimDraft.what.trim()
+                if (what === '') return
+                actions.addClaim({
+                  what,
+                  how: claimDraft.how.trim(),
+                  layer: claimDraft.layer,
+                  outcome: claimDraft.outcome,
+                })
+                setClaimDraft({ what: '', how: '', layer: 'unit', outcome: 'pass' })
+              },
+            },
+            h('input', {
+              className: 'dsh-board__input dsh-board__input--compact',
+              type: 'text',
+              value: claimDraft.what,
+              placeholder: t('task.claimWhat'),
+              'aria-label': t('task.claimWhat'),
+              onChange: (event) => { setClaimDraft({ ...claimDraft, what: event.target.value }) },
+            }),
+            h('input', {
+              className: 'dsh-board__input dsh-board__input--compact',
+              type: 'text',
+              value: claimDraft.how,
+              placeholder: t('task.claimHow'),
+              'aria-label': t('task.claimHow'),
+              onChange: (event) => { setClaimDraft({ ...claimDraft, how: event.target.value }) },
+            }),
+            h('select', {
+              className: 'dsh-board__select',
+              value: claimDraft.layer,
+              'aria-label': t('task.claimLayer'),
+              onChange: (event) => { setClaimDraft({ ...claimDraft, layer: event.target.value }) },
+            }, LAYERS.map(layer => h('option', { key: layer, value: layer }, t('task.layer.' + layer)))),
+            h('select', {
+              className: 'dsh-board__select',
+              value: claimDraft.outcome,
+              'aria-label': t('task.claimOutcome'),
+              onChange: (event) => { setClaimDraft({ ...claimDraft, outcome: event.target.value }) },
+            },
+            h('option', { value: 'pass' }, t('task.claimPass')),
+            h('option', { value: 'fail' }, t('task.claimFail')),
+            h('option', { value: 'unverified' }, t('task.claimUnverified'))),
+            h('button', { type: 'submit', className: 'dsh-board__ghost' }, t('task.claimSubmit')))),
+          h('div', { key: 'nextRow', className: 'dsh-board__nextRow' },
+            h('span', { className: 'dsh-board__sectionHint dsh-board__nextLabel' }, t('task.next')),
+            h('input', {
+              className: 'dsh-board__input dsh-board__input--compact',
+              type: 'text',
+              value: task.nextAction,
+              placeholder: t('task.nextPlaceholder'),
+              'aria-label': t('task.next'),
+              onChange: (event) => { actions.nextAction(event.target.value) },
+            })),
+          task.events.length === 0
+            ? null
+            : h('details', { key: 'events', className: 'dsh-board__events' },
+              h('summary', null, t('task.events') + ' ' + task.events.length),
+              h('ul', null,
+                task.events.slice(-8).map((event, index) =>
+                  h('li', { key: index },
+                    new Date(event.at).toLocaleString() + ' · ' + event.kind
+                    + (event.from === '' ? '' : ' ' + event.from + '→' + event.to)
+                    + (event.note === '' ? '' : ' · ' + event.note))))),
+          h('div', { key: 'meta', className: 'dsh-board__taskMeta' },
+            h('input', {
+              className: 'dsh-board__range',
+              type: 'range',
+              min: 0,
+              max: 100,
+              step: 5,
+              value: task.progress,
+              'aria-label': t('detail.progress'),
+              onChange: (event) => { actions.progress(clampPercent(Number(event.target.value), task.progress)) },
+            }),
+            h('span', { className: 'dsh-board__taskPercent' }, task.progress + '%'),
+            h('label', { className: 'dsh-board__check' },
+              h('input', {
+                type: 'checkbox',
+                checked: task.blocked,
+                'aria-label': t('task.blocked'),
+                onChange: (event) => { actions.blocked(event.target.checked) },
+              }),
+              t('task.blocked')),
+            h('label', { className: 'dsh-board__check' },
+              h('input', {
+                type: 'checkbox',
+                checked: task.requireHuman,
+                'aria-label': t('task.requireHuman'),
+                onChange: (event) => { actions.requireHuman(event.target.checked) },
+              }),
+              t('task.requireHuman'))),
+          h('div', { key: 'fields', className: 'dsh-board__taskFields' },
+            h('select', {
+              className: 'dsh-board__select dsh-board__select--compact',
+              value: task.priority,
+              'aria-label': t('task.priority'),
+              title: t('task.priority'),
+              onChange: (event) => { actions.priority(event.target.value) },
+            },
+            PRIORITIES.map(priority => h('option', { key: priority, value: priority }, t('priority.' + priority)))),
+            h('input', {
+              className: 'dsh-board__taskNote dsh-board__dueDate',
+              type: 'date',
+              value: task.dueDate,
+              'aria-label': t('task.due'),
+              title: overdue ? t('task.overdue') : t('task.due'),
+              'data-overdue': overdue ? 'true' : undefined,
+              onChange: (event) => { actions.dueDate(event.target.value) },
+            }),
+            overdue ? h('span', { className: 'dsh-board__chip dsh-board__chip--overdue' }, t('task.overdue')) : null,
+            h('input', {
+              className: 'dsh-board__taskNote dsh-board__tags',
+              type: 'text',
+              value: task.tags.join(', '),
+              placeholder: t('task.tags'),
+              'aria-label': t('task.tags'),
+              title: t('task.tagsPlaceholder'),
+              onChange: (event) => { actions.tags(event.target.value) },
+            }),
+            // How many memory entries point at this card is context, not state.
+            linkedMemory > 0
+              ? h('span', { className: 'dsh-board__chip' }, String(linkedMemory) + ' ' + t('task.linkedMemory'))
+              : null),
           h('input', {
-            type: 'checkbox',
-            checked: task.requireHuman,
-            'aria-label': t('task.requireHuman'),
-            onChange: (event) => { actions.requireHuman(event.target.checked) },
+            key: 'note',
+            className: 'dsh-board__taskNote',
+            type: 'text',
+            value: task.note,
+            placeholder: t('task.note'),
+            'aria-label': t('task.note'),
+            onChange: (event) => { actions.note(event.target.value) },
           }),
-          t('task.requireHuman'))),
-      h('div', { className: 'dsh-board__taskFields' },
-        h('select', {
-          className: 'dsh-board__select dsh-board__select--compact',
-          value: task.priority,
-          'aria-label': t('task.priority'),
-          title: t('task.priority'),
-          onChange: (event) => { actions.priority(event.target.value) },
-        },
-        PRIORITIES.map(priority => h('option', { key: priority, value: priority }, t('priority.' + priority)))),
-        h('input', {
-          className: 'dsh-board__taskNote dsh-board__dueDate',
-          type: 'date',
-          value: task.dueDate,
-          'aria-label': t('task.due'),
-          title: overdue ? t('task.overdue') : t('task.due'),
-          'data-overdue': overdue ? 'true' : undefined,
-          onChange: (event) => { actions.dueDate(event.target.value) },
-        }),
-        overdue ? h('span', { className: 'dsh-board__chip dsh-board__chip--overdue' }, t('task.overdue')) : null,
-        h('input', {
-          className: 'dsh-board__taskNote dsh-board__tags',
-          type: 'text',
-          value: task.tags.join(', '),
-          placeholder: t('task.tags'),
-          'aria-label': t('task.tags'),
-          title: t('task.tagsPlaceholder'),
-          onChange: (event) => { actions.tags(event.target.value) },
-        })),
-      h('input', {
-        className: 'dsh-board__taskNote',
-        type: 'text',
-        value: task.note,
-        placeholder: t('task.note'),
-        'aria-label': t('task.note'),
-        onChange: (event) => { actions.note(event.target.value) },
-      }),
-      h(SessionRow, {
-        task,
-        summary,
-        t,
-        options: sessionOptions,
-        busy: sessionBusy,
-        actions: {
-          createSession: actions.createSession,
-          linkSession: actions.linkSession,
-          unbindSession: actions.unbindSession,
-          syncTitle: actions.syncTitle,
-        },
-      }),
-      sessionError === '' ? null : h('p', { className: 'dsh-board__error', role: 'alert' }, sessionError),
-      dispatchError === '' ? null : h('p', { className: 'dsh-board__error', role: 'alert' }, t('task.dispatchFailed') + '：' + dispatchError))
+          h(SessionRow, {
+            key: 'session',
+            task,
+            summary,
+            t,
+            options: sessionOptions,
+            busy: sessionBusy,
+            actions: {
+              createSession: actions.createSession,
+              linkSession: actions.linkSession,
+              unbindSession: actions.unbindSession,
+              syncTitle: actions.syncTitle,
+            },
+          }),
+          sessionError === '' ? null : h('p', { key: 'sessionError', className: 'dsh-board__error', role: 'alert' }, sessionError),
+          dispatchError === '' ? null : h('p', { key: 'dispatchError', className: 'dsh-board__error', role: 'alert' }, t('task.dispatchFailed') + '：' + dispatchError),
+          // The fold control closes the unfolded block, where the reader ends up.
+          h('div', { key: 'collapse', className: 'dsh-board__taskActions' }, detailsToggle())
+        ]
+        : null)
     }
 
     /**
@@ -3874,6 +4104,7 @@ window.__ModuleLoader__.load({
      */
     function MemoryItem({ entry, linkedTitle, t, onDelete, onSave }) {
       const [editing, setEditing] = React.useState(false)
+      const [open, setOpen] = React.useState(false)
       const [draft, setDraft] = React.useState(entry.text)
       const stamp = new Date(entry.createdAt)
       const label = stamp.getFullYear() + '-' + String(stamp.getMonth() + 1).padStart(2, '0') + '-' + String(stamp.getDate()).padStart(2, '0')
@@ -3902,7 +4133,15 @@ window.__ModuleLoader__.load({
             className: 'dsh-board__memoryText dsh-board__memoryText--editable',
             title: t('memory.edit'),
             onClick: () => { setDraft(entry.text); setEditing(true) },
-          }, entry.text),
+          }, open || entry.text.length <= MEMORY_PREVIEW ? entry.text : entry.text.slice(0, MEMORY_PREVIEW) + '…'),
+        entry.text.length > MEMORY_PREVIEW
+          ? h('button', {
+            type: 'button',
+            className: 'dsh-board__ghost dsh-board__memoryToggle',
+            'aria-expanded': open,
+            onClick: () => { setOpen(!open) },
+          }, open ? t('memory.collapse') : t('memory.expand'))
+          : null,
         h('span', { className: 'dsh-board__memoryMeta' },
           linkedTitle === '' ? null : h('span', { className: 'dsh-board__chip' }, linkedTitle),
           h('span', null, label),
@@ -3928,6 +4167,7 @@ window.__ModuleLoader__.load({
       const [describeDraft, setDescribeDraft] = React.useState('')
       const [memoryDraft, setMemoryDraft] = React.useState('')
       const [memoryLink, setMemoryLink] = React.useState('')
+      const [memoryShown, setMemoryShown] = React.useState(MEMORY_PAGE)
       const [busyTaskId, setBusyTaskId] = React.useState('')
       const [sessionError, setSessionError] = React.useState('')
       // An AI draft is a proposal, not the truth: it is edited here before it can
@@ -4164,27 +4404,19 @@ window.__ModuleLoader__.load({
 
       const columns = STATUS_ORDER.map((status) => {
         const items = visibleTasks.filter(task => task.status === status)
-        return h('section', {
+        return h(StatusColumn, {
           key: status,
-          className: 'dsh-board__column',
-          'data-status': status,
-          onDragOver: (event) => {
-            if (event !== null && event !== undefined && typeof event.preventDefault === 'function') event.preventDefault()
-          },
+          status,
+          items,
+          t,
           onDrop: () => { actions.dropOn(status) },
-        },
-        h('header', { className: 'dsh-board__columnHead' },
-          h('span', { className: 'dsh-board__dot', 'data-tone': taskToneOf({ status, blocked: false }), 'aria-hidden': true }),
-          h('span', { className: 'dsh-board__columnTitle' }, t('status.' + status)),
-          h('span', { className: 'dsh-board__count' }, String(items.length))),
-        h('div', { className: 'dsh-board__cards' },
-          items.length === 0
-            ? h('p', { className: 'dsh-board__columnEmpty' }, t('column.empty'))
-            : items.map(renderTaskCard)))
+          renderTaskCard,
+        })
       })
 
       const memoryItems = project.memory.slice().sort((left, right) => right.createdAt - left.createdAt)
-      const memoryRows = memoryItems.map(entry => h(MemoryItem, {
+      const memoryVisible = memoryItems.slice(0, memoryShown)
+      const memoryRows = memoryVisible.map(entry => h(MemoryItem, {
         key: entry.id,
         entry,
         t,
@@ -4480,7 +4712,15 @@ window.__ModuleLoader__.load({
             h('button', { type: 'submit', className: 'dsh-board__primary' }, t('memory.add'))),
           memoryRows.length === 0
             ? h('p', { className: 'dsh-board__empty' }, t('memory.empty'))
-            : h('div', { className: 'dsh-board__memoryList' }, memoryRows)))
+            : h('div', { className: 'dsh-board__memoryList' },
+              memoryRows,
+              memoryItems.length > memoryVisible.length
+                ? h('button', {
+                  type: 'button',
+                  className: 'dsh-board__ghost dsh-board__memoryMore',
+                  onClick: () => { setMemoryShown(memoryShown + MEMORY_PAGE) },
+                }, fill(t('memory.more'), String(memoryItems.length - memoryVisible.length)))
+                : null)))
     }
 
     /**

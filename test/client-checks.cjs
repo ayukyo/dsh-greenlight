@@ -331,6 +331,80 @@ function cancelConfirm() {
   click(cancel)
 }
 
+/** @returns {boolean} whether the element is the compact card's details toggle. */
+function isDetailsToggle(element) {
+  return element.type === 'button'
+    && element.props !== undefined
+    && typeof element.props.className === 'string'
+    && element.props.className.includes('dsh-board__detailsToggle')
+}
+
+/** @returns {boolean} whether the element is a folded card's details toggle. */
+function isFoldedToggle(element) {
+  return isDetailsToggle(element) && element.props['aria-expanded'] === false
+}
+
+/** @returns {boolean} whether the element is an opened card's details toggle. */
+function isOpenedToggle(element) {
+  return isDetailsToggle(element) && element.props['aria-expanded'] === true
+}
+
+/**
+ * A card is folded by default; open every card on the board so the controls it
+ * holds back (priority, due date, tags, the Session row, the check form, the
+ * next step) are on screen.
+ * @returns how many cards were opened.
+ */
+function openCards() {
+  let opened = 0
+  for (;;) {
+    const toggle = findElement(isFoldedToggle)
+    if (!toggle) return opened
+    click(toggle)
+    opened += 1
+    if (opened > 400) throw new Error('too many folded cards to open')
+  }
+}
+
+/**
+ * The card whose title field shows this title.
+ * @param title - the card title.
+ * @returns the card element, or null.
+ */
+function cardOf(title) {
+  const card = findElement(element => element.type === 'article'
+    && element.props !== undefined
+    && element.props.className === 'dsh-board__task'
+    && findIn(element, child => child.props !== undefined
+      && child.props.className === 'dsh-board__taskTitle'
+      && child.props.value === title) !== undefined)
+  return card === undefined ? null : card
+}
+
+/**
+ * Open one folded card so its controls are on screen.
+ * @param title - the card title.
+ */
+function openCard(title) {
+  const card = cardOf(title)
+  if (card === null) throw new Error('no card titled "' + title + '"')
+  const toggle = findIn(card, isFoldedToggle)
+  if (toggle === undefined) throw new Error('card "' + title + '" is already open')
+  click(toggle)
+}
+
+/**
+ * Fold one open card again.
+ * @param title - the card title.
+ */
+function foldCard(title) {
+  const card = cardOf(title)
+  if (card === null) throw new Error('no card titled "' + title + '"')
+  const toggle = findIn(card, isOpenedToggle)
+  if (toggle === undefined) throw new Error('card "' + title + '" is already folded')
+  click(toggle)
+}
+
 async function flush() {
   await new Promise(resolve => setImmediate(resolve))
   rerender()
@@ -757,6 +831,8 @@ const fakeCtx = {
   check('manual edit wins over auto', doc && doc.projects[0].tasks[0].titleSource === 'manual')
 
   console.log('\n[8] progress, blocked, note')
+  // The slider, the blocked switch and the note live behind the card's details.
+  openCards()
   change(byClassName('dsh-board__range')[0], '60')
   doc = stored()
   check('progress stored', doc && doc.projects[0].tasks[0].progress === 60, doc && String(doc.projects[0].tasks[0].progress))
@@ -942,6 +1018,7 @@ const fakeCtx = {
   await settle()
   check('subtask reached the host', hostState.board.projects[0].tasks.length === 1, String(hostState.board.projects[0].tasks.length))
   check('host subtask starts in todo', hostState.board.projects[0].tasks[0].status === 'todo', hostState.board.projects[0].tasks[0].status)
+  openCards()
   change(byClassName('dsh-board__range')[0], '80')
   await settle()
   check('progress reached the host', hostState.board.projects[0].tasks[0].progress === 80, String(hostState.board.projects[0].tasks[0].progress))
@@ -1037,12 +1114,16 @@ const fakeCtx = {
   check('both new cards start in todo', stored().projects[0].tasks.every(task => task.status === 'todo'), JSON.stringify(stored().projects[0].tasks.map(task => task.status)))
 
   console.log('\n[23] advancing a card moves it and reaches the Host')
+  // The advance control lives behind the details, so the card opens first.
+  openCards()
   click(byButtonText('\u2192'))
   await settle()
   let taskDoc = stored().projects[0].tasks
   check('card advanced to running', taskDoc.some(task => task.status === 'running'), JSON.stringify(taskDoc.map(task => task.status)))
   check('host saw the move', hostState.board.projects[0].tasks.some(task => task.status === 'running'))
 
+  // The card that just moved folded in its new column; open the board again.
+  openCards()
   const advanceButtons = findAll(element => element.type === 'button' && childText(element) === '\u2192')
   check('an advance control is offered per movable card', advanceButtons.length >= 2, String(advanceButtons.length))
   click(advanceButtons[advanceButtons.length - 1])
@@ -1054,6 +1135,7 @@ const fakeCtx = {
   console.log('\n[24] the review gate needs a human')
   const reviewCards = stored().projects[0].tasks
   const runningTask = reviewCards.find(task => task.status === 'running')
+  openCards()
   const advanceForReview = findAll(element => element.type === 'button' && childText(element) === '\u2192')
   click(advanceForReview[0])
   await settle()
@@ -1077,6 +1159,8 @@ const fakeCtx = {
   check('host saw the rejection', hostState.board.projects[0].tasks.some(task => task.status === 'failed'))
 
   console.log('\n[26] accepting a card completes it')
+  // The remaining card is in a column of its own; open it so its arrow is on screen.
+  openCards()
   const stillReview = stored().projects[0].tasks.filter(task => task.status === 'review')
   if (stillReview.length === 0) {
     const arrows = findAll(element => element.type === 'button' && childText(element) === '\u2192')
@@ -1096,6 +1180,7 @@ const fakeCtx = {
   check('reopened card returns to todo', stored().projects[0].tasks.some(task => task.status === 'todo' && task.reviewReason !== ''))
 
   console.log('\n[28] dispatch sends the composed prompt into the Session')
+  openCards()
   const sessionless = findAll(element => element.type === 'button' && childText(element) === '派给会话')
   check('every card offers the merged dispatch control', sessionless.length > 0, String(sessionless.length))
   check('an unbound card can create its own Session, so the control is enabled',
@@ -1127,6 +1212,8 @@ const fakeCtx = {
   check('dispatch records that the Session received the board context',
     stored().projects[0].tasks.some(task => task.sessionId === 'sess-dispatch' && task.contextSentAt > 0),
     JSON.stringify(stored().projects[0].tasks.map(task => ({ sessionId: task.sessionId, contextSentAt: task.contextSentAt }))))
+  // The dispatch moved the card into running, where it folded again.
+  openCards()
   const openButtonsAfterDispatch = findAll(element => element.type === 'button' && childText(element) === '打开会话')
   check('the dispatched card button switches to open', openButtonsAfterDispatch.length === 1, String(openButtonsAfterDispatch.length))
   const sessionRowAfterDispatch = byClassName('dsh-board__sessionRow')[0]
@@ -1162,6 +1249,7 @@ const fakeCtx = {
     seedHost: taskButtonSeed([{ id: 't-new', title: '还没派过的卡', status: 'todo', progress: 0, sessionId: '', contextSentAt: 0 }]),
   })
   await settle(300)
+  openCards()
   const createDispatchButton = byButtonText('派给会话')
   check('an unbound card shows the dispatch label', createDispatchButton !== null, textOf().slice(0, 240))
   check('the unbound card shows no open label yet', byButtonText('打开会话') === null, textOf().slice(0, 240))
@@ -1173,6 +1261,8 @@ const fakeCtx = {
   check('the card is armed the moment the prompt is sent',
     optimisticTask.sessionId === 'sess-auto-1' && optimisticTask.status === 'running' && optimisticTask.contextSentAt > 0,
     JSON.stringify(optimisticTask))
+  // Dispatching moved the card into running, so it folded again.
+  openCards()
   check('the card button says open before the Host answers', byButtonText('打开会话') !== null, textOf().slice(0, 300))
   await settle(600)
   await flush()
@@ -1209,6 +1299,7 @@ const fakeCtx = {
     seedHost: taskButtonSeed([{ id: 't-bound', title: '绑定未派活的卡', status: 'todo', progress: 0, sessionId: 'sess-bound', contextSentAt: 0 }]),
   })
   await settle(300)
+  openCards()
   const boundDispatchButton = byButtonText('派给会话')
   check('a bound but undispatched card shows the dispatch label', boundDispatchButton !== null, textOf().slice(0, 240))
   check('that card warns its Session has no board context', textOf().includes('这个会话还没收到看板上下文'), textOf().slice(0, 320))
@@ -1227,6 +1318,8 @@ const fakeCtx = {
   const boundTask = stored().projects[0].tasks[0]
   check('the bound card moves to running', boundTask.status === 'running', boundTask.status)
   check('the bound card records contextSentAt', boundTask.contextSentAt > 0, String(boundTask.contextSentAt))
+  // The dispatch moved this card into running, so open it again.
+  openCards()
   check('the bound card button becomes open', byButtonText('打开会话') !== null, textOf().slice(0, 300))
 
   // --- already dispatched: the button only switches the workspace.
@@ -1246,6 +1339,7 @@ const fakeCtx = {
     }]),
   })
   await settle(300)
+  openCards()
   check('a dispatched card labels its button open',
     byButtonText('打开会话') !== null && byButtonText('派给会话') === null,
     textOf().slice(0, 300))
@@ -1278,6 +1372,7 @@ const fakeCtx = {
     seedHost: taskButtonSeed([{ id: 't-fail', title: '两步都会失败的卡', status: 'todo', progress: 0, sessionId: '', contextSentAt: 0 }]),
   })
   await settle(300)
+  openCards()
   const originalCreateForButton = fakeSessions.create
   fakeSessions.create = async () => {
     sessionState.createCalls += 1
@@ -1338,6 +1433,7 @@ const fakeCtx = {
   })
   rerender()
   await settle(300)
+  openCards()
   const noServiceButton = byButtonText('派给会话')
   check('an unbound card stays disabled without the Session service',
     noServiceButton !== null && noServiceButton.props.disabled === true,
@@ -1411,6 +1507,7 @@ const fakeCtx = {
   change(byAria('任务描述（自动生成标题）'), '带优先级的任务')
   submit(formOf(byAria('任务描述（自动生成标题）')))
   await settle()
+  openCards()
   change(byAria('优先级'), 'high')
   change(byAria('截止'), '2026-12-31')
   change(byAria('标签'), '后端, 联调')
@@ -1474,17 +1571,21 @@ const fakeCtx = {
   await settle()
 
   // Back-move: from running, the back control returns the card to todo.
+  openCards()
   click(byButtonText('\u2192'))
   await settle()
   check('card advanced to running', stored().projects[0].tasks[0].status === 'running', stored().projects[0].tasks[0].status)
+  openCards()
   click(byButtonText('\u2190'))
   await settle()
   check('back button returns the card one column', stored().projects[0].tasks[0].status === 'todo', stored().projects[0].tasks[0].status)
 
   // Advance to review: that column intentionally has no plain back control
   // (a rejection carries a reason instead).
+  openCards()
   click(byButtonText('\u2192'))
   await settle()
+  openCards()
   click(byButtonText('\u2192'))
   await settle()
   check('card advanced to review', stored().projects[0].tasks[0].status === 'review', stored().projects[0].tasks[0].status)
@@ -1492,6 +1593,7 @@ const fakeCtx = {
   check('review offers accept and reject instead', byButtonText('通过') !== null && byButtonText('打回') !== null)
 
   // Overdue: a due date in the past marks the card.
+  openCards()
   change(byAria('截止'), '2020-01-01')
   await settle()
   check('past due date is stored', stored().projects[0].tasks[0].dueDate === '2020-01-01')
@@ -1579,6 +1681,7 @@ console.log('\n[38] automatic acceptance: presentation and the mode switch')
   }
   await mount({ seedHost: acceptanceSeed })
   await settle(400)
+  openCards()
 
   check('auto-accepted card shows its source', textOf().includes('自动通过'), textOf().slice(0, 260))
   check('human-accepted card shows its source', textOf().includes('人工通过'))
@@ -1628,6 +1731,7 @@ console.log('\n[38] automatic acceptance: presentation and the mode switch')
   }
   await mount({ seedHost: ruleSeed })
   await settle(400)
+  openCards()
 
   check('rule checkboxes render', byAria('需要完成说明') !== null && byAria('校验交付物文件') !== null)
   check('root directory field is hidden until verification is on', byAria('项目根目录') !== null)
@@ -1701,6 +1805,7 @@ console.log('\n[40] claims, layers, next action, debt and the audit trail')
   }
   await mount({ seedHost: disciplineSeed })
   await settle(400)
+  openCards()
 
   const nextField = byAria('下一步')
   check('next action is visible in its field', nextField !== null && nextField.props.value === '补 build 层验证', nextField && String(nextField.props.value))
@@ -1763,6 +1868,7 @@ console.log('\n[41] the claim form and the archive')
   }
   await mount({ seedHost: claimSeed })
   await settle(400)
+  openCards()
 
   check('the claim form is offered', byAria('验证了什么') !== null, textOf().slice(0, 160))
   change(byAria('验证了什么'), '单测通过')
@@ -2211,6 +2317,7 @@ console.log('\n[46] a version-11 browser mirror migrates to the materials text')
   }
   await mount({ seedHost: requireHumanSeed })
   await settle(400)
+  openCards()
 
   const humanSwitch = byAria('需要我验收')
   check('the card renders the "needs my acceptance" switch', humanSwitch !== null, textOf().slice(0, 260))
@@ -2392,22 +2499,25 @@ console.log('\n[46] a version-11 browser mirror migrates to the materials text')
     }]),
   })
   await settle(400)
-  check('a long card hides its completion note by default',
-    !textOf().includes(longText.slice(0, 60)),
-    textOf().slice(0, 300))
-  check('the collapsed card says what it is hiding',
+  check('a folded card hides its completion note', !textOf().includes(longText.slice(0, 60)), textOf().slice(0, 300))
+  check('a folded card hides the detail summary too', !textOf().includes('详情已折叠'), textOf().slice(0, 300))
+  check('a folded card offers no long-text toggle', byButtonText('展开详情') === null, textOf().slice(0, 300))
+  openCards()
+  check('opening the card still folds its long detail until asked',
     textOf().includes('详情已折叠') && textOf().includes('验证项 3 条'),
     textOf().slice(0, 300))
   const showDetail = byButtonText('展开详情')
-  check('the collapsed card offers to expand', showDetail !== null && showDetail.props['aria-expanded'] === false)
+  check('the folded detail offers to expand', showDetail !== null && showDetail.props['aria-expanded'] === false)
   click(showDetail)
   await settle(200)
   check('expanding shows the completion note', textOf().includes(longText.slice(0, 60)), textOf().slice(0, 300))
   check('expanding shows the checks and deliverables',
     textOf().includes('验证一') && textOf().includes('a.md') && !textOf().includes('详情已折叠'),
     textOf().slice(0, 400))
-  const hideDetail = byButtonText('收起详情')
-  check('an expanded card offers to fold again', hideDetail !== null && hideDetail.props['aria-expanded'] === true)
+  const hideDetail = findAll(element => element.type === 'button'
+    && childText(element) === '收起详情'
+    && element.props['aria-expanded'] === true)[0]
+  check('an expanded card offers to fold its long detail again', hideDetail !== undefined)
   click(hideDetail)
   await settle(200)
   check('folding again hides the note',
@@ -2422,8 +2532,10 @@ console.log('\n[46] a version-11 browser mirror migrates to the materials text')
     }]),
   })
   await settle(400)
-  check('a short card shows its completion note', textOf().includes('短说明'), textOf().slice(0, 300))
-  check('a short card offers no detail toggle', byButtonText('展开详情') === null && !textOf().includes('详情已折叠'))
+  check('a short card hides its note while folded', !textOf().includes('短说明'), textOf().slice(0, 300))
+  openCards()
+  check('a short card shows its completion note once opened', textOf().includes('短说明'), textOf().slice(0, 300))
+  check('a short card offers no long-text toggle', byButtonText('展开详情') === null && !textOf().includes('详情已折叠'))
 
   console.log('\n[50] the two new switches are named in both locales')
   check('the acceptance switch and its chip are localized',
@@ -2444,6 +2556,297 @@ console.log('\n[46] a version-11 browser mirror migrates to the materials text')
       zh: dictionaries.greenlight.zh['project.ruleBlockOnDebt'],
       en: dictionaries.greenlight.en['project.ruleBlockOnDebt'],
     }))
+
+  console.log('\n[52] a folded card is a summary, not a form')
+  const compactSeed = {
+    version: 12,
+    revision: 131,
+    updatedAt: new Date().toISOString(),
+    projects: [{
+      id: 'p-compact',
+      name: '紧凑项目',
+      acceptanceMode: 'auto',
+      materials: '',
+      memory: [],
+      trash: [],
+      tasks: [
+        {
+          id: 't-rich',
+          title: '信息很多的卡',
+          status: 'todo',
+          progress: 40,
+          priority: 'high',
+          dueDate: '2020-01-01',
+          blocked: true,
+          requireHuman: true,
+          sessionId: 'sess-compact',
+          contextSentAt: Date.now() - 1000,
+        },
+        {
+          id: 't-plain',
+          title: '干净的卡',
+          status: 'todo',
+          progress: 0,
+          priority: 'normal',
+          dueDate: '',
+          blocked: false,
+          requireHuman: false,
+          sessionId: '',
+        },
+      ],
+    }],
+  }
+  sessionState.ids = ['sess-compact']
+  sessionState.byId = { 'sess-compact': { id: 'sess-compact', displayTitle: '紧凑会话', running: true } }
+  await mount({ seedHost: compactSeed })
+  await settle(400)
+  const richCard = cardOf('信息很多的卡')
+  check('both cards render', richCard !== null && cardOf('干净的卡') !== null, textOf().slice(0, 200))
+  check('a folded card hides the priority menu', byAria('优先级') === null)
+  check('a folded card hides the due date field', byAria('截止') === null)
+  check('a folded card hides the tags field', byAria('标签') === null)
+  check('a folded card hides the note field', byAria('任务说明（可选）') === null)
+  check('a folded card hides the progress slider', byClassName('dsh-board__range').length === 0, String(byClassName('dsh-board__range').length))
+  check('a folded card hides the blocked switch', byAria('阻塞') === null)
+  check('a folded card hides the Session row', byClassName('dsh-board__sessionRow').length === 0, String(byClassName('dsh-board__sessionRow').length))
+  check('a folded card hides the check form', byAria('验证了什么') === null)
+  check('a folded card hides the next step', byAria('下一步') === null)
+  const richPill = findIn(richCard, element => element.props && element.props.className === 'dsh-board__pill')
+  check('a folded card still names its state', richPill !== undefined && childText(richPill) === '待办' && richPill.props['data-status'] === 'todo', richPill && childText(richPill))
+  check('a folded card still shows its title',
+    findIn(richCard, element => element.props && element.props.className === 'dsh-board__taskTitle').props.value === '信息很多的卡')
+  check('a folded card keeps its delete control', findIn(richCard, element => element.props && element.props.className === 'dsh-board__delete') !== undefined)
+  const chipTexts = descendants(richCard, [])
+    .filter(element => element.props && typeof element.props.className === 'string'
+      && element.props.className.split(' ').indexOf('dsh-board__chip') >= 0)
+    .map(childText)
+  check('the folded chip row carries priority, due date, blocked and acceptance',
+    chipTexts.includes('高') && chipTexts.includes('2020-01-01') && chipTexts.includes('阻塞') && chipTexts.includes('待我验收'),
+    JSON.stringify(chipTexts))
+  check('an overdue due date is marked red on the folded card',
+    findIn(richCard, element => element.props && typeof element.props.className === 'string'
+      && element.props.className.includes('dsh-board__chip--overdue')) !== undefined,
+    JSON.stringify(chipTexts))
+  const compactSessionTitle = findIn(richCard, element => element.props && element.props.className === 'dsh-board__sessionTitle')
+  check('the Session chip names the Session in the chip row',
+    findIn(richCard, element => element.props && typeof element.props.className === 'string'
+      && element.props.className.includes('dsh-board__chip--session')) !== undefined
+    && compactSessionTitle !== undefined
+    && childText(compactSessionTitle) === '紧凑会话',
+    compactSessionTitle === undefined ? 'no session chip' : JSON.stringify(childText(compactSessionTitle)))
+  check('the Session chip keeps the running dot',
+    findIn(richCard, element => element.props
+      && element.props.className === 'dsh-board__dot'
+      && element.props['data-tone'] === 'green') !== undefined)
+  const richBar = findIn(richCard, element => element.props && element.props.className === 'dsh-board__barFill')
+  check('a card with progress draws its bar while folded', richBar !== undefined, textOf().slice(0, 200))
+  check('the folded bar carries the percentage', richBar !== undefined && richBar.props.style.width === '40%', richBar && JSON.stringify(richBar.props.style))
+  const plainCard = cardOf('干净的卡')
+  check('a card with nothing to say renders no chip row',
+    findIn(plainCard, element => element.props && element.props.className === 'dsh-board__chipRow') === undefined)
+  check('a card with no progress draws no bar',
+    findIn(plainCard, element => element.props && element.props.className === 'dsh-board__taskBar') === undefined)
+  check('a normal priority is not chipped', !descendants(plainCard, [])
+    .some(element => element.props && typeof element.props.className === 'string'
+      && element.props.className.indexOf('dsh-board__chip') === 0 && childText(element) === '普通'))
+  check('every folded card offers exactly one details control', findAll(isFoldedToggle).length === 2, String(findAll(isFoldedToggle).length))
+  check('the details control says it opens',
+    childText(findIn(richCard, isFoldedToggle)) === '详情' && findIn(richCard, isFoldedToggle).props['aria-expanded'] === false,
+    childText(findIn(richCard, isFoldedToggle)))
+  // The chip has to tell running from idle, or folding the Session row away
+  // would hide the one piece of state the row carried.
+  sessionState.byId = { 'sess-compact': { id: 'sess-compact', displayTitle: '紧凑会话', running: false } }
+  rerender()
+  const idleCard = cardOf('信息很多的卡')
+  check('an idle Session keeps a quiet dot on the folded chip',
+    findIn(idleCard, element => element.props
+      && element.props.className === 'dsh-board__dot'
+      && element.props['data-tone'] === 'idle') !== undefined)
+  check('the idle Session chip drops the live highlight',
+    findIn(idleCard, element => element.props && element.props.className === 'dsh-board__chip dsh-board__chip--session').props['data-live'] === undefined,
+    JSON.stringify(findIn(idleCard, element => element.props && element.props.className === 'dsh-board__chip dsh-board__chip--session').props['data-live']))
+  sessionState.byId = { 'sess-compact': { id: 'sess-compact', displayTitle: '紧凑会话', running: true } }
+  rerender()
+
+  openCard('信息很多的卡')
+  const openRichCard = cardOf('信息很多的卡')
+  check('opening the card shows the priority menu', findIn(openRichCard, element => element.props && element.props['aria-label'] === '优先级') !== undefined)
+  check('opening the card shows the due date and tags',
+    findIn(openRichCard, element => element.props && element.props['aria-label'] === '截止') !== undefined
+    && findIn(openRichCard, element => element.props && element.props['aria-label'] === '标签') !== undefined)
+  check('opening the card shows the note field',
+    findIn(openRichCard, element => element.props && element.props['aria-label'] === '任务说明（可选）') !== undefined)
+  check('opening the card shows the Session row',
+    byClassName('dsh-board__sessionRow').length === 1, String(byClassName('dsh-board__sessionRow').length))
+  check('opening the card shows the check form and the next step',
+    findIn(openRichCard, element => element.props && element.props['aria-label'] === '验证了什么') !== undefined
+    && findIn(openRichCard, element => element.props && element.props['aria-label'] === '下一步') !== undefined)
+  check('the open card keeps the controls it was built with',
+    findIn(openRichCard, element => element.props && element.props.className === 'dsh-board__taskStatus') !== undefined
+    && findIn(openRichCard, element => element.props && element.props.className === 'dsh-board__taskMeta') !== undefined
+    && findIn(openRichCard, element => element.props && element.props.className === 'dsh-board__taskFields') !== undefined
+    && findIn(openRichCard, element => element.props && element.props.className === 'dsh-board__claimForm') !== undefined)
+  check('the other card stays folded', findIn(cardOf('干净的卡'), isFoldedToggle) !== undefined)
+  const openToggle = findIn(openRichCard, isOpenedToggle)
+  check('the open card offers to fold again', openToggle !== undefined && childText(openToggle) === '收起详情', openToggle && childText(openToggle))
+  foldCard('信息很多的卡')
+  const refoldedCard = cardOf('信息很多的卡')
+  check('folding again hides the priority menu', findIn(refoldedCard, element => element.props && element.props['aria-label'] === '优先级') === undefined)
+  check('folding again hides the Session row', byClassName('dsh-board__sessionRow').length === 0, String(byClassName('dsh-board__sessionRow').length))
+  check('the folded card offers its details control again',
+    childText(findIn(refoldedCard, isFoldedToggle)) === '详情' && findIn(refoldedCard, isFoldedToggle).props['aria-expanded'] === false)
+
+  console.log('\n[53] a card in review keeps its decision on the folded card')
+  await mount({
+    seedHost: {
+      version: 12,
+      revision: 141,
+      updatedAt: new Date().toISOString(),
+      projects: [{
+        id: 'p-decide',
+        name: '决策项目',
+        acceptanceMode: 'auto',
+        materials: '',
+        memory: [],
+        trash: [],
+        tasks: [{ id: 't-decide', title: '等我拍板的卡', status: 'review', progress: 100 }],
+      }],
+    },
+  })
+  await settle(400)
+  check('the folded review card offers accept and reject',
+    byButtonText('通过') !== null && byButtonText('打回') !== null, textOf().slice(0, 240))
+  check('the folded review card keeps the other actions behind the details',
+    byButtonText('派给会话') === null && byButtonText('归档') === null && findElement(isFoldedToggle) !== null,
+    textOf().slice(0, 240))
+  click(byButtonText('打回'))
+  check('rejecting asks for a reason without opening the card',
+    byAria('打回原因（必填）') !== null && findElement(isFoldedToggle) !== null, textOf().slice(0, 300))
+  click(byButtonText('取消'))
+  check('cancelling the rejection closes the reason field', byAria('打回原因（必填）') === null)
+  openCards()
+  check('opening the review card shows its full controls',
+    byAria('优先级') !== null && byClassName('dsh-board__sessionRow').length === 1, textOf().slice(0, 300))
+  click(byButtonText('通过'))
+  await settle(320)
+  check('the accept control still completes the card',
+    stored().projects[0].tasks[0].status === 'done', stored().projects[0].tasks[0].status)
+
+  console.log('\n[54] a long column renders one page at a time')
+  const manyTasks = []
+  for (let index = 0; index < 30; index += 1) {
+    manyTasks.push({ id: 't-many-' + String(index), title: '批量卡片 ' + String(index + 1), status: 'todo', progress: 0 })
+  }
+  await mount({
+    seedHost: {
+      version: 12,
+      revision: 151,
+      updatedAt: new Date().toISOString(),
+      projects: [{ id: 'p-many', name: '批量项目', acceptanceMode: 'auto', materials: '', memory: [], trash: [], tasks: manyTasks }],
+    },
+  })
+  await settle(600)
+  const renderedTitles = () => byClassName('dsh-board__taskTitle').map(element => element.props.value)
+  check('a long column renders only its first page', byClassName('dsh-board__task').length === 25, String(byClassName('dsh-board__task').length))
+  check('the column head still counts every card',
+    findElement(element => element.props && element.props.className === 'dsh-board__count' && childText(element) === '30') !== undefined,
+    textOf().slice(0, 200))
+  check('the last card of the page is on screen', renderedTitles().includes('批量卡片 25'), String(renderedTitles().length))
+  check('a card past the first page is not rendered', !renderedTitles().includes('批量卡片 26'))
+  check('the rest waits behind one button', byButtonText('显示更多（还剩 5 张）') !== null, textOf().slice(-240))
+  click(byButtonText('显示更多（还剩 5 张）'))
+  check('the button brings the whole column on screen', byClassName('dsh-board__task').length === 30, String(byClassName('dsh-board__task').length))
+  check('the last card is finally rendered', renderedTitles().includes('批量卡片 30'))
+  check('the pager disappears once every card is shown', byButtonText('显示更多（还剩 5 张）') === null)
+
+  console.log('\n[55] the details toggle, the pager and the internal scroll are in the page')
+  check('the details toggle is named in both locales',
+    dictionaries.greenlight.zh['task.details'] === '详情'
+    && dictionaries.greenlight.en['task.details'] === 'Details'
+    && dictionaries.greenlight.zh['task.collapseDetails'] === '收起详情'
+    && dictionaries.greenlight.en['task.collapseDetails'] === 'Collapse',
+    JSON.stringify({
+      zhDetails: dictionaries.greenlight.zh['task.details'],
+      enDetails: dictionaries.greenlight.en['task.details'],
+      zhCollapse: dictionaries.greenlight.zh['task.collapseDetails'],
+      enCollapse: dictionaries.greenlight.en['task.collapseDetails'],
+    }))
+  check('the long-text detail keys are left alone',
+    dictionaries.greenlight.zh['task.detailsShow'] === '展开详情'
+    && dictionaries.greenlight.zh['task.detailsHide'] === '收起详情'
+    && dictionaries.greenlight.en['task.detailsShow'] === 'Show details'
+    && dictionaries.greenlight.en['task.detailsHide'] === 'Hide details',
+    JSON.stringify({
+      zhShow: dictionaries.greenlight.zh['task.detailsShow'],
+      zhHide: dictionaries.greenlight.zh['task.detailsHide'],
+    }))
+  check('the column pager is named in both locales',
+    dictionaries.greenlight.zh['column.more'] === '显示更多（还剩 %s 张）'
+    && dictionaries.greenlight.en['column.more'] === 'Show %s more',
+    JSON.stringify({
+      zh: dictionaries.greenlight.zh['column.more'],
+      en: dictionaries.greenlight.en['column.more'],
+    }))
+  check('a column caps its height instead of stretching the page',
+    source.includes('max-height: calc(100vh - 380px)'), 'column max-height missing')
+  check('the card area scrolls inside the column',
+    source.includes('overflow-y: auto') && source.includes('overscroll-behavior: contain'), 'cards scroll missing')
+  check('the column head sticks with an opaque ground',
+    source.includes('position: sticky')
+    && source.includes('backdrop-filter: blur(2px)')
+    && source.includes('color-mix(in srgb, var(--gl-state) 4%, var(--dsw-alias-bg-base))'),
+    'sticky head missing')
+  check('the details toggle and the chip row carry their own classes',
+    source.includes('dsh-board__detailsToggle')
+    && source.includes('dsh-board__chipRow')
+    && source.includes('dsh-board__taskCompact')
+    && source.includes('dsh-board__taskActions'),
+    'compact card classes missing')
+
+  console.log('\n[56] memory entries shorten themselves and the list pages')
+  const memorySeed = (count, long) => ({
+    version: 12,
+    revision: 121,
+    updatedAt: new Date().toISOString(),
+    projects: [{
+      id: 'p-mem', name: '记忆项目', acceptanceMode: 'auto', materials: '', tasks: [], trash: [],
+      memory: Array.from({ length: count }, (_, index) => ({
+        id: 'm' + index,
+        text: long && index === 0 ? '记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。' : '记忆 ' + index,
+        taskId: '',
+        createdAt: Date.now() - index * 1000,
+      })),
+    }],
+  })
+  await mount({ seedHost: memorySeed(1, true) })
+  await settle(400)
+  const longMemoryText = '记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。记忆内容很长的条目。'
+  check('a long memory entry is truncated by default',
+    !textOf().includes(longMemoryText),
+    textOf().slice(0, 200))
+  const expandMemory = byButtonText('展开全文')
+  check('a long memory entry offers to expand', expandMemory !== null)
+  click(expandMemory)
+  await settle(200)
+  check('expanding a memory entry shows the whole text',
+    textOf().includes(longMemoryText) && byButtonText('收起') !== null,
+    textOf().slice(0, 200))
+  click(byButtonText('收起'))
+  await settle(200)
+  check('collapsing a memory entry shortens it again',
+    !textOf().includes(longMemoryText) && byButtonText('展开全文') !== null)
+
+  await mount({ seedHost: memorySeed(8, false) })
+  await settle(400)
+  const memoryMore = byButtonText('显示更多（还剩 2 条）')
+  check('the memory list pages instead of listing everything',
+    memoryMore !== null && textOf().includes('记忆 2') && !textOf().includes('记忆 7'),
+    textOf().slice(0, 400))
+  click(memoryMore)
+  await settle(200)
+  check('showing more reveals the rest of the memory',
+    textOf().includes('记忆 7') && byButtonText('显示更多（还剩 2 条）') === null,
+    textOf().slice(0, 400))
 
   console.log('\n' + (failures === 0 ? 'ALL ' + checks + ' CHECKS PASSED' : failures + ' of ' + checks + ' CHECKS FAILED'))
   process.exit(failures === 0 ? 0 : 1)
