@@ -39,7 +39,7 @@ window.__ModuleLoader__.load({
     /** Local storage key of the board document (kept across versions so it migrates in place). */
     const STORAGE_KEY = 'dsh.greenlight.v1'
     /** Document version written back to storage; it mirrors the Host document shape. */
-    const DOC_VERSION = 10
+    const DOC_VERSION = 11
     /** Subtask priorities, low to high. */
     const PRIORITIES = ['low', 'normal', 'high', 'urgent']
     /** How long a removed card stays restorable (mirrors the Host rule). */
@@ -84,6 +84,12 @@ window.__ModuleLoader__.load({
     const MAX_DERIVED_TITLE = 30
     /** How many Sessions the "link an existing Session" menu lists. */
     const SESSION_OPTION_LIMIT = 60
+    /** A draft plan holds at most this many items; the Host accepts no more. */
+    const MAX_PLAN_ITEMS = 50
+    /** A draft item title is bounded like a subtask title. */
+    const MAX_PLAN_TITLE = 200
+    /** How much of an item note the draft card shows before cutting it. */
+    const PLAN_NOTE_PREVIEW = 80
 
     const zh = {
       'panel.label': '绿灯看板',
@@ -130,6 +136,26 @@ window.__ModuleLoader__.load({
       'references.edit': '编辑资料',
       'references.save': '保存',
       'references.cancel': '取消',
+      'references.intakePlaceholder': '粘贴本地路径或链接，一行一个',
+      'references.intake': '扫描材料',
+      'references.intakeHint': '已添加 %s 条资料（跳过 %s 条重复，%s 条未找到）',
+      'plan.section': '拆解草案',
+      'plan.countUnit': '项',
+      'plan.refCount': '引用 %s',
+      'plan.apply': '全部落卡',
+      'plan.discard': '丢弃草案',
+      'plan.edit': '编辑草案',
+      'plan.save': '保存草案',
+      'plan.cancel': '取消编辑',
+      'plan.addItem': '添加一项',
+      'plan.itemTitle': '任务标题',
+      'plan.itemNote': '说明（可选）',
+      'plan.summary': '拆解说明',
+      'plan.deleteItem': '删除这一项',
+      'plan.saveFailed': '草案至少需要一项非空标题',
+      'confirm.discardPlan': '丢弃拆解草案？',
+      'confirm.discardPlanBody': '草案会被清空，之后可以让 AI 重新生成。',
+      'confirm.discardPlanAction': '丢弃',
       'tone.red': '异常',
       'tone.yellow': '推进中',
       'tone.green': '顺利',
@@ -343,6 +369,26 @@ window.__ModuleLoader__.load({
       'references.edit': 'Edit reference',
       'references.save': 'Save',
       'references.cancel': 'Cancel',
+      'references.intakePlaceholder': 'Paste local paths or links, one per line',
+      'references.intake': 'Scan materials',
+      'references.intakeHint': 'Added %s reference(s) (skipped %s duplicates, %s not found)',
+      'plan.section': 'Draft plan',
+      'plan.countUnit': 'items',
+      'plan.refCount': '%s refs',
+      'plan.apply': 'Create all cards',
+      'plan.discard': 'Discard draft',
+      'plan.edit': 'Edit draft',
+      'plan.save': 'Save draft',
+      'plan.cancel': 'Cancel editing',
+      'plan.addItem': 'Add item',
+      'plan.itemTitle': 'Card title',
+      'plan.itemNote': 'Note (optional)',
+      'plan.summary': 'What this plan covers',
+      'plan.deleteItem': 'Remove this item',
+      'plan.saveFailed': 'A draft needs at least one non-empty title',
+      'confirm.discardPlan': 'Discard the draft plan?',
+      'confirm.discardPlanBody': 'The draft is cleared; the AI can generate a new one later.',
+      'confirm.discardPlanAction': 'Discard',
       'tone.red': 'At risk',
       'tone.yellow': 'In progress',
       'tone.green': 'On track',
@@ -2192,6 +2238,43 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Parse a stored draft plan.
+     *
+     * A draft is a proposal, not work: it lives only until the human accepts it
+     * (`plan.apply`) or throws it away (`plan.discard`). Only the fields the Host
+     * defines are kept, so a hand-edited document cannot smuggle extra state
+     * into the board through the draft.
+     * @param item - candidate from the stored document.
+     * @returns a normalized plan, or null when there is no usable draft.
+     */
+    function normalizePlan(item) {
+      if (item === null || typeof item !== 'object') return null
+      const source = Array.isArray(item.items) ? item.items : []
+      const items = []
+      for (let index = 0; index < source.length && items.length < MAX_PLAN_ITEMS; index += 1) {
+        const entry = source[index]
+        if (entry === null || typeof entry !== 'object') continue
+        const title = typeof entry.title === 'string' ? entry.title.trim() : ''
+        if (title === '' || title.length > MAX_PLAN_TITLE) continue
+        items.push({
+          title,
+          note: typeof entry.note === 'string' ? entry.note : '',
+          priority: PRIORITIES.includes(entry.priority) ? entry.priority : 'normal',
+          tags: asStringList(entry.tags),
+          refs: asStringList(entry.refs),
+          deliverables: Array.isArray(entry.deliverables) ? entry.deliverables.filter(value => typeof value === 'string') : [],
+        })
+      }
+      if (items.length === 0) return null
+      return {
+        id: typeof item.id === 'string' && item.id !== '' ? item.id : createId('plan-'),
+        summary: typeof item.summary === 'string' ? item.summary : '',
+        createdAt: typeof item.createdAt === 'number' && isFinite(item.createdAt) ? item.createdAt : Date.now(),
+        items,
+      }
+    }
+
+    /**
      * Normalize the acceptance rules of one project.
      * @param value - candidate rules.
      * @returns the rules with every default filled in.
@@ -2295,6 +2378,15 @@ window.__ModuleLoader__.load({
       for (let index = 0; index < tasks.length; index += 1) {
         tasks[index].refs = tasks[index].refs.filter(ref => knownReferences[ref] === true)
       }
+      // A draft plan (version 11) points at references too: an item may only
+      // cite entries that exist, so a dangling id is dropped exactly as it is
+      // for a subtask.
+      const plan = normalizePlan(item.plan)
+      if (plan !== null) {
+        for (let index = 0; index < plan.items.length; index += 1) {
+          plan.items[index].refs = plan.items[index].refs.filter(ref => knownReferences[ref] === true)
+        }
+      }
       return {
         id: typeof item.id === 'string' && item.id !== '' ? item.id : createId('p'),
         name: item.name,
@@ -2304,6 +2396,7 @@ window.__ModuleLoader__.load({
         anchor: item.anchor !== null && typeof item.anchor === 'object' ? item.anchor : { digest: '', decisions: [], risks: [], deviations: [] },
         lastCheckAt: typeof item.lastCheckAt === 'number' ? item.lastCheckAt : 0,
         rootDir: typeof item.rootDir === 'string' ? item.rootDir : '',
+        plan,
         references,
         tasks,
         memory,
@@ -2361,6 +2454,7 @@ window.__ModuleLoader__.load({
           id: createId('p'),
           name: '默认项目',
           acceptanceMode: 'auto',
+          plan: null,
           references: [],
           tasks,
           memory: [],
@@ -2425,6 +2519,10 @@ window.__ModuleLoader__.load({
       const [status, setStatus] = React.useState('connecting')
       const [recovered, setRecovered] = React.useState(false)
       const [stuck, setStuck] = React.useState(0)
+      // Per-operation outcomes the Host may return with a write. The board
+      // renders from the document alone; only surfaces that need a count (the
+      // material scan) read this, and they degrade when it is absent.
+      const [results, setResults] = React.useState(null)
       const revisionRef = React.useRef(-1)
       const queueRef = React.useRef([])
       const timerRef = React.useRef(null)
@@ -2484,6 +2582,9 @@ window.__ModuleLoader__.load({
         }
         busyRef.current = true
         queueRef.current = []
+        // A new batch reports new outcomes: the previous ones must not be read
+        // as if they belonged to this one.
+        setResults(null)
         try {
           const response = await fetch(HOST_OPS_PATH, {
             method: 'POST',
@@ -2517,6 +2618,7 @@ window.__ModuleLoader__.load({
           }
           if (!response.ok) throw new Error('board ops failed: HTTP ' + response.status)
           const body = await response.json()
+          if (body !== null && body !== undefined && Array.isArray(body.results)) setResults(body.results)
           // Adopt only when nothing is still waiting: otherwise this response
           // predates the user's newer edits and would revert them on screen.
           if (queueRef.current.length === 0) {
@@ -2694,6 +2796,7 @@ window.__ModuleLoader__.load({
       return [projects, commit, {
         enqueue,
         status,
+        results,
         recovered,
         stuck,
         archived,
@@ -2854,6 +2957,17 @@ window.__ModuleLoader__.load({
      */
     function fill(template, value) {
       return template.replace('%s', value)
+    }
+
+    /**
+     * Cut text to a readable preview length.
+     * @param text - text to shorten.
+     * @param limit - maximum characters kept.
+     * @returns the text, or its first `limit` characters followed by an ellipsis.
+     */
+    function truncateText(text, limit) {
+      if (typeof text !== 'string' || text.length <= limit) return text
+      return text.slice(0, limit) + '…'
     }
 
     /**
@@ -3609,12 +3723,26 @@ window.__ModuleLoader__.load({
      * @param props - the selected project, its update callbacks, Session data, and locale seat.
      * @returns the detail element.
      */
-    function ProjectDetail({ project, t, actions, sessionsSnapshot }) {
+    function ProjectDetail({ project, t, actions, sessionsSnapshot, syncStatus, batchResults }) {
       const [describeDraft, setDescribeDraft] = React.useState('')
       const [memoryDraft, setMemoryDraft] = React.useState('')
       const [memoryLink, setMemoryLink] = React.useState('')
       const [busyTaskId, setBusyTaskId] = React.useState('')
       const [sessionError, setSessionError] = React.useState('')
+      const [intakeDraft, setIntakeDraft] = React.useState('')
+      // A scan reports a local-only line. The Host owns the filesystem, so the
+      // counts come from the batch result when the Host returns one; without it
+      // only the added entries can be counted, from the references that landed.
+      const [intakePending, setIntakePending] = React.useState(null)
+      // An AI draft is a proposal, not the truth: it is edited here before it can
+      // become cards. The edit keeps the whole item list, so refs and deliverables
+      // on unchanged rows survive the save.
+      const [planEditing, setPlanEditing] = React.useState(false)
+      const [planDraft, setPlanDraft] = React.useState({ summary: '', items: [] })
+      const [planError, setPlanError] = React.useState(false)
+      // The line is computed once, when the batch that carried the scan settles,
+      // and then replayed verbatim: a later batch must not rewrite it.
+      const intakeReportRef = React.useRef({ pending: null, line: '' })
 
       const linkedCounts = React.useMemo(() => {
         const counts = {}
@@ -3708,6 +3836,101 @@ window.__ModuleLoader__.load({
         if (kind === 'link' && value === '') return
         actions.addReference(kind, name, value, referenceDraft.description.trim())
         setReferenceDraft({ kind, name: '', value: '', description: '' })
+      }
+
+      /**
+       * Open the draft for editing, seeded from what the AI produced.
+       */
+      const startPlanEdit = () => {
+        const plan = project.plan
+        if (plan === null) return
+        setPlanEditing(true)
+        setPlanError(false)
+        setPlanDraft({
+          summary: plan.summary,
+          items: plan.items.map(item => ({
+            title: item.title,
+            note: item.note,
+            priority: item.priority,
+            tags: item.tags.slice(),
+            refs: item.refs.slice(),
+            deliverables: item.deliverables.slice(),
+          })),
+        })
+      }
+
+      const cancelPlanEdit = () => {
+        setPlanEditing(false)
+        setPlanError(false)
+      }
+
+      /**
+       * Replace one field of one draft row.
+       * @param index - row position.
+       * @param field - 'title' or 'note'.
+       * @param value - new text.
+       */
+      const editPlanItem = (index, field, value) => {
+        setPlanDraft(previous => ({
+          ...previous,
+          items: previous.items.map((item, position) => (position === index ? { ...item, [field]: value } : item)),
+        }))
+        setPlanError(false)
+      }
+
+      const removePlanItem = (index) => {
+        setPlanDraft(previous => ({
+          ...previous,
+          items: previous.items.filter((item, position) => position !== index),
+        }))
+        setPlanError(false)
+      }
+
+      const addPlanItem = () => {
+        setPlanDraft(previous => ({
+          ...previous,
+          items: previous.items.concat([{
+            title: '',
+            note: '',
+            priority: 'normal',
+            tags: [],
+            refs: [],
+            deliverables: [],
+          }]),
+        }))
+      }
+
+      // An empty title cannot become a card, so a draft whose rows are all blank
+      // is refused here instead of being sent and rejected by the Host.
+      const savePlanEdit = (event) => {
+        event.preventDefault()
+        const items = planDraft.items.filter(item => item.title.trim() !== '')
+        if (items.length === 0) {
+          setPlanError(true)
+          return
+        }
+        actions.savePlan(planDraft.summary.trim(), items.map(item => ({ ...item, title: item.title.trim() })))
+        setPlanEditing(false)
+        setPlanError(false)
+      }
+
+      // A material scan is a Host operation: it owns the filesystem and the
+      // directory-expansion rules, so the page only splits the pasted block into
+      // paths and reports what the Host wrote back.
+      const scanMaterials = (event) => {
+        event.preventDefault()
+        const paths = []
+        const lines = intakeDraft.split(/\r?\n/)
+        for (let index = 0; index < lines.length; index += 1) {
+          const trimmed = lines[index].trim()
+          if (trimmed === '' || paths.includes(trimmed)) continue
+          paths.push(trimmed)
+        }
+        if (paths.length === 0) return
+        intakeReportRef.current = { pending: null, line: '' }
+        setIntakePending({ before: project.references.map(reference => reference.id) })
+        setIntakeDraft('')
+        actions.intake(paths)
       }
 
       /**
@@ -3862,6 +4085,43 @@ window.__ModuleLoader__.load({
 
       const linkOptions = project.tasks.map(task => h('option', { key: task.id, value: task.id }, task.title))
 
+      // Wait for the batch that carried the scan to settle before reporting: the
+      // references only exist once the Host adopted the operation. The line is
+      // cached per scan so unrelated later batches cannot rewrite it.
+      let intakeLine = ''
+      if (intakePending !== null) {
+        const cached = intakeReportRef.current
+        if (cached.pending === intakePending) {
+          intakeLine = cached.line
+        } else if (syncStatus === 'synced' || syncStatus === 'local') {
+          // Only a settled board is worth reporting: offline or conflicted work
+          // is still queued, and its counts are not known yet.
+          const batch = Array.isArray(batchResults) ? batchResults : []
+          let report = null
+          for (let index = batch.length - 1; index >= 0; index -= 1) {
+            const candidate = batch[index]
+            if (candidate !== null && typeof candidate === 'object' && candidate.type === 'reference.intake') {
+              report = candidate
+              break
+            }
+          }
+          let added = 0
+          let skipped = 0
+          let missing = 0
+          if (report !== null && Array.isArray(report.added)) {
+            added = report.added.length
+            if (Array.isArray(report.skipped)) skipped = report.skipped.length
+            if (Array.isArray(report.missing)) missing = report.missing.length
+          } else {
+            for (let index = 0; index < project.references.length; index += 1) {
+              if (intakePending.before.indexOf(project.references[index].id) < 0) added += 1
+            }
+          }
+          intakeLine = fill(fill(fill(t('references.intakeHint'), String(added)), String(skipped)), String(missing))
+          intakeReportRef.current = { pending: intakePending, line: intakeLine }
+        }
+      }
+
       return h('section', { className: 'dsh-board__detail' },
         h('div', { className: 'dsh-board__hero' },
           h('div', { className: 'dsh-board__projectTitleRow' },
@@ -3937,6 +4197,19 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dsh-board__sectionHead' },
             h('span', { className: 'dsh-board__sectionTitle' }, t('references.section')),
             h('span', { className: 'dsh-board__sectionHint' }, t('references.hint'))),
+          h('form', { className: 'dsh-board__form', onSubmit: scanMaterials },
+            h('textarea', {
+              className: 'dsh-board__shared',
+              rows: 3,
+              value: intakeDraft,
+              placeholder: t('references.intakePlaceholder'),
+              'aria-label': t('references.intakePlaceholder'),
+              onChange: (event) => { setIntakeDraft(event.target.value) },
+            }),
+            h('button', { type: 'submit', className: 'dsh-board__ghost' }, t('references.intake'))),
+          intakeLine === ''
+            ? null
+            : h('p', { className: 'dsh-board__sectionHint', role: 'status' }, intakeLine),
           h('form', { className: 'dsh-board__form', onSubmit: addReference },
             h('select', {
               className: 'dsh-board__select dsh-board__select--compact',
@@ -4064,6 +4337,86 @@ window.__ModuleLoader__.load({
             className: 'dsh-board__ghost',
             onClick: () => { actions.recheck() },
           }, t('board.recheck'))),
+        project.plan === null
+          ? null
+          : h('div', { className: 'dsh-board__card' },
+            h('div', { className: 'dsh-board__sectionHead' },
+              h('span', { className: 'dsh-board__sectionTitle' }, t('plan.section')),
+              h('span', { className: 'dsh-board__chip' },
+                String(project.plan.items.length) + ' ' + t('plan.countUnit'))),
+            planEditing
+              ? h('form', { onSubmit: savePlanEdit },
+                h('input', {
+                  className: 'dsh-board__input dsh-board__input--compact',
+                  type: 'text',
+                  value: planDraft.summary,
+                  placeholder: t('plan.summary'),
+                  'aria-label': t('plan.summary'),
+                  onChange: (event) => { setPlanDraft({ ...planDraft, summary: event.target.value }) },
+                }),
+                h('div', { className: 'dsh-board__memoryList' },
+                  planDraft.items.map((entry, index) => h('div', { key: String(index), className: 'dsh-board__memoryItem' },
+                    h('input', {
+                      className: 'dsh-board__input dsh-board__input--compact',
+                      type: 'text',
+                      value: entry.title,
+                      placeholder: t('plan.itemTitle'),
+                      'aria-label': t('plan.itemTitle'),
+                      onChange: (event) => { editPlanItem(index, 'title', event.target.value) },
+                    }),
+                    h('input', {
+                      className: 'dsh-board__input dsh-board__input--compact',
+                      type: 'text',
+                      value: entry.note,
+                      placeholder: t('plan.itemNote'),
+                      'aria-label': t('plan.itemNote'),
+                      onChange: (event) => { editPlanItem(index, 'note', event.target.value) },
+                    }),
+                    h('button', {
+                      type: 'button',
+                      className: 'dsh-board__delete',
+                      'aria-label': t('plan.deleteItem'),
+                      title: t('plan.deleteItem'),
+                      onClick: () => { removePlanItem(index) },
+                    }, '\u00d7')))),
+                planError
+                  ? h('p', { className: 'dsh-board__sectionHint', role: 'alert' }, t('plan.saveFailed'))
+                  : null,
+                h('div', { className: 'dsh-board__form' },
+                  h('button', { type: 'button', className: 'dsh-board__ghost', onClick: addPlanItem }, t('plan.addItem')),
+                  h('button', { type: 'submit', className: 'dsh-board__primary' }, t('plan.save')),
+                  h('button', { type: 'button', className: 'dsh-board__ghost', onClick: cancelPlanEdit }, t('plan.cancel'))))
+              : [
+                project.plan.summary === ''
+                  ? null
+                  : h('p', { key: 'summary', className: 'dsh-board__sectionHint' }, project.plan.summary),
+                h('div', { key: 'items', className: 'dsh-board__memoryList' },
+                  project.plan.items.map((entry, index) => h('div', { key: String(index), className: 'dsh-board__memoryItem' },
+                    h('span', { className: 'dsh-board__memoryText' }, entry.title),
+                    entry.note === ''
+                      ? null
+                      : h('span', { className: 'dsh-board__sectionHint' }, truncateText(entry.note, PLAN_NOTE_PREVIEW)),
+                    entry.refs.length === 0
+                      ? null
+                      : h('span', { className: 'dsh-board__chip' },
+                        fill(t('plan.refCount'), String(entry.refs.length)))))),
+                h('div', { key: 'controls', className: 'dsh-board__form' },
+                  h('button', {
+                    type: 'button',
+                    className: 'dsh-board__primary',
+                    onClick: () => { actions.applyPlan() },
+                  }, t('plan.apply')),
+                  h('button', {
+                    type: 'button',
+                    className: 'dsh-board__ghost',
+                    onClick: startPlanEdit,
+                  }, t('plan.edit')),
+                  h('button', {
+                    type: 'button',
+                    className: 'dsh-board__ghost',
+                    onClick: () => { actions.discardPlan() },
+                  }, t('plan.discard'))),
+              ]),
         h('div', { className: 'dsh-board__card' },
           h('div', { className: 'dsh-board__sectionHead' },
             h('span', { className: 'dsh-board__sectionTitle' }, t('archive.title')),
@@ -4245,7 +4598,7 @@ window.__ModuleLoader__.load({
           return
         }
         setMissingProjectName(false)
-        const project = { id: createId('p'), name, references: [], tasks: [], memory: [], createdAt: Date.now() }
+        const project = { id: createId('p'), name, plan: null, references: [], tasks: [], memory: [], createdAt: Date.now() }
         commit(projects.concat([project]))
         sync.enqueue([{ type: 'project.add', id: project.id, name }])
         setProjectDraft('')
@@ -4298,6 +4651,37 @@ window.__ModuleLoader__.load({
           if (selectedProjectId === '') return
           replaceProject(selectedProjectId, project => ({ ...project, name: value }))
           sync.enqueue([{ type: 'project.rename', projectId: selectedProjectId, name: value }])
+        },
+        // A material scan is written by the Host: it expands directories and
+        // records the paths relative to the project root, so this side only
+        // carries the requested paths and lets the returned board land.
+        intake: (paths) => {
+          if (selectedProjectId === '' || !Array.isArray(paths) || paths.length === 0) return
+          sync.enqueue([{ type: 'reference.intake', projectId: selectedProjectId, paths }])
+        },
+        // The draft becomes cards on the Host; it clears the plan there and the
+        // adopted board removes the card here.
+        applyPlan: () => {
+          if (selectedProjectId === '') return
+          sync.enqueue([{ type: 'plan.apply', projectId: selectedProjectId }])
+        },
+        // A hand-edited draft overwrites the stored one; the Host keeps the
+        // per-item detail the page does not edit (refs, deliverables, tags).
+        savePlan: (summary, items) => {
+          if (selectedProjectId === '') return
+          sync.enqueue([{ type: 'plan.set', projectId: selectedProjectId, summary, items }])
+        },
+        discardPlan: () => {
+          if (selectedProjectId === '') return
+          askConfirm({
+            title: t('confirm.discardPlan'),
+            body: t('confirm.discardPlanBody'),
+            confirmLabel: t('confirm.discardPlanAction'),
+            tone: 'danger',
+            onConfirm: () => {
+              sync.enqueue([{ type: 'plan.discard', projectId: selectedProjectId }])
+            },
+          })
         },
         addReference: (kind, name, value, description) => {
           if (selectedProjectId === '') return
@@ -4931,6 +5315,8 @@ window.__ModuleLoader__.load({
               t,
               actions: { ...actions, archived: sync.archived || [] },
               sessionsSnapshot,
+              syncStatus: sync.status,
+              batchResults: sync.results,
             })),
         undo === null
           ? null

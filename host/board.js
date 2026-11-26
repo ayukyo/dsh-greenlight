@@ -18,10 +18,13 @@
  *  10 (one typed `references` list replaces the `shared` text and the
  *      `sharedEntries` list; `link` references are re-checked, `note` ones are
  *      convention text that is never probed)
+ *  11 (a project may hold one `plan`: a draft breakdown of subtasks that a
+ *      human confirms before it becomes real cards; materials can be scanned
+ *      from local paths and links through `reference.intake`)
  */
 
 /** Version written by this module. */
-export const DOC_VERSION = 10
+export const DOC_VERSION = 11
 
 /** Subtask columns, in board order. */
 export const TASK_STATUSES = ['backlog', 'todo', 'running', 'review', 'done', 'failed']
@@ -121,6 +124,10 @@ export const MAX_DELIVERABLES = 20
 export const MAX_DELIVERABLE_LENGTH = 500
 /** Longest accepted project root directory. */
 export const MAX_ROOT_LENGTH = 1000
+/** Fewest items a plan may hold. */
+export const MIN_PLAN_ITEMS = 1
+/** Most items a plan may hold. */
+export const MAX_PLAN_ITEMS = 50
 
 /**
  * @returns the current time as an ISO string.
@@ -507,6 +514,8 @@ function emptyProject() {
     anchor: asAnchor({}),
     rootDir: '',
     references: [],
+    // The draft breakdown of subtasks, or null when there is none.
+    plan: null,
     tasks: [],
     memory: [],
     trash: [],
@@ -628,6 +637,149 @@ function normalizeLegacySharedEntry(raw) {
 }
 
 /**
+ * @param value - candidate.
+ * @returns whether the value is an array whose entries are all strings.
+ */
+function isStringArray(value) {
+  if (!Array.isArray(value)) return false
+  return value.every(item => typeof item === 'string')
+}
+
+/**
+ * Normalize the items of one plan.
+ *
+ * Loading is lenient on purpose: a hand-edited document must not lose the whole
+ * draft because one item is unreadable, so unusable items are dropped instead of
+ * failing the load.
+ *
+ * @param value - candidate item list.
+ * @param knownReferences - reference ids the project actually has.
+ * @returns the normalized items, in order, bounded.
+ */
+function normalizePlanItems(value, knownReferences) {
+  const items = []
+  for (const candidate of Array.isArray(value) ? value : []) {
+    if (!isRecord(candidate)) continue
+    const title = asString(candidate.title).trim()
+    if (title === '') continue
+    items.push({
+      title: bounded(title, MAX_TITLE_LENGTH),
+      note: bounded(asString(candidate.note), MAX_NOTE_LENGTH),
+      priority: asPriority(candidate.priority, 'normal'),
+      tags: asTags(candidate.tags),
+      refs: asRefs(candidate.refs).filter(ref => knownReferences.has(ref)),
+      deliverables: asDeliverables(candidate.deliverables),
+    })
+    if (items.length >= MAX_PLAN_ITEMS) break
+  }
+  return items
+}
+
+/**
+ * Normalize one project plan: the draft breakdown a human confirms before it
+ * becomes real subtasks.
+ *
+ * A version-10 document has no plan at all, and a draft without any item would
+ * render as an empty card, so both come back as `null`.
+ *
+ * @param raw - candidate plan.
+ * @param knownReferences - reference ids the project actually has.
+ * @returns a normalized plan, or null.
+ */
+function normalizePlan(raw, knownReferences) {
+  if (!isRecord(raw)) return null
+  const items = normalizePlanItems(raw.items, knownReferences)
+  if (items.length === 0) return null
+  return {
+    id: typeof raw.id === 'string' && raw.id !== '' ? raw.id : createId('plan-'),
+    summary: bounded(asString(raw.summary).trim(), MAX_NOTE_LENGTH),
+    createdAt: typeof raw.createdAt === 'number' && Number.isFinite(raw.createdAt) ? raw.createdAt : Date.now(),
+    items,
+  }
+}
+
+/**
+ * Validate the items of a plan before they are stored.
+ *
+ * Unlike a document load, invalid input is refused outright: a draft is written
+ * once, so an item silently dropped here would be a lost instruction.
+ *
+ * @param project - project the plan belongs to.
+ * @param value - candidate item list.
+ * @returns `{ items }` on success, or `{ code }` when refused.
+ */
+function validatePlanItems(project, value) {
+  if (!Array.isArray(value)) return { code: 'invalid_field' }
+  if (value.length < MIN_PLAN_ITEMS || value.length > MAX_PLAN_ITEMS) return { code: 'invalid_field' }
+  const knownReferences = new Set(project.references.map(entry => entry.id))
+  const items = []
+  for (const candidate of value) {
+    if (!isRecord(candidate)) return { code: 'invalid_field' }
+    if (typeof candidate.title !== 'string') return { code: 'invalid_field' }
+    const title = candidate.title.trim()
+    if (title === '' || title.length > MAX_TITLE_LENGTH) return { code: 'invalid_field' }
+    const item = {
+      title,
+      note: '',
+      priority: 'normal',
+      tags: [],
+      refs: [],
+      deliverables: [],
+    }
+    if (candidate.note !== undefined) {
+      if (typeof candidate.note !== 'string') return { code: 'invalid_field' }
+      item.note = bounded(candidate.note, MAX_NOTE_LENGTH)
+    }
+    if (candidate.priority !== undefined) {
+      if (!TASK_PRIORITIES.includes(candidate.priority)) return { code: 'invalid_field' }
+      item.priority = candidate.priority
+    }
+    if (candidate.tags !== undefined) {
+      if (!isStringArray(candidate.tags)) return { code: 'invalid_field' }
+      item.tags = asTags(candidate.tags)
+    }
+    if (candidate.refs !== undefined) {
+      if (!isStringArray(candidate.refs)) return { code: 'invalid_field' }
+      for (const ref of candidate.refs) {
+        if (!knownReferences.has(ref)) return { code: 'invalid_field' }
+      }
+      item.refs = asRefs(candidate.refs)
+    }
+    if (candidate.deliverables !== undefined) {
+      if (!isStringArray(candidate.deliverables)) return { code: 'invalid_field' }
+      item.deliverables = asDeliverables(candidate.deliverables)
+    }
+    items.push(item)
+  }
+  return { items }
+}
+
+/**
+ * Turn one plan item into a subtask record, at the task defaults the contract
+ * states: `todo`, zero progress, and the item's note/priority/tags/refs/
+ * deliverables carried over.
+ * @param item - normalized plan item.
+ * @param at - creation timestamp.
+ * @returns a normalized subtask.
+ */
+function taskFromPlanItem(item, at) {
+  return normalizeTask({
+    id: createId('t'),
+    title: item.title,
+    titleSource: 'manual',
+    note: item.note,
+    status: 'todo',
+    progress: 0,
+    priority: item.priority,
+    tags: item.tags,
+    refs: item.refs,
+    deliverables: item.deliverables,
+    createdAt: at,
+    updatedAt: at,
+  })
+}
+
+/**
  * Normalize one trash record.
  * @param raw - candidate record.
  * @returns a normalized record, or null when unusable.
@@ -706,6 +858,9 @@ function normalizeProject(raw) {
   for (const task of tasks) {
     task.refs = task.refs.filter(ref => knownReferences.has(ref))
   }
+  // The draft breakdown is validated against the same reference ids as the
+  // cards: a plan that pointed at a removed reference would be a dead link.
+  const plan = normalizePlan(raw.plan, knownReferences)
   const trash = []
   const trashSource = Array.isArray(raw.trash) ? raw.trash : []
   const cutoff = Date.now() - TRASH_RETENTION_MS
@@ -726,6 +881,7 @@ function normalizeProject(raw) {
     lastCheckAt: typeof raw.lastCheckAt === 'number' && Number.isFinite(raw.lastCheckAt) ? raw.lastCheckAt : 0,
     rootDir: bounded(asString(raw.rootDir).trim(), MAX_ROOT_LENGTH),
     references,
+    plan,
     tasks,
     memory,
     trash,
@@ -1275,6 +1431,11 @@ function removeReference(project, referenceId) {
  *
  * Every operation is idempotent: repeating it either succeeds without changing
  * the document or reports a stable code the caller can recover from.
+ *
+ * An operation whose contract states a result writes it back on `op.result`
+ * (`plan.apply` reports `{ created, skippedTitles }`), so a caller can read the
+ * outcome without diffing the board.
+ *
  * @param board - board to mutate.
  * @param op - operation envelope.
  * @returns null on success, or an error code.
@@ -1593,6 +1754,102 @@ export function applyOp(board, op, origin) {
     }
     case 'reference.remove': {
       return removeReference(project, op.referenceId)
+    }
+    case 'reference.intake': {
+      // The prepare phase scanned the paths and resolved them (that needs the
+      // disk); applying only writes the ledger. A caller that skipped the scan
+      // has nothing to add, so it is refused instead of silently doing nothing.
+      if (project === undefined) return 'unknown_project'
+      if (!Array.isArray(op.added)) return 'invalid_field'
+      const entries = []
+      for (const candidate of op.added) {
+        if (!isRecord(candidate)) return 'invalid_field'
+        const name = asString(candidate.name).trim()
+        const value = asString(candidate.value).trim()
+        if (name === '' || value === '') return 'invalid_field'
+        entries.push({
+          id: typeof candidate.id === 'string' && candidate.id !== '' ? candidate.id : createId('ref-'),
+          name: bounded(name, MAX_TITLE_LENGTH),
+          value: bounded(value, MAX_LINK_LENGTH),
+        })
+      }
+      // The scan already dropped values the project holds; re-checking keeps the
+      // op idempotent when a batch carries two intakes of the same file.
+      const known = new Set(project.references.map(entry => entry.value))
+      for (const entry of entries) {
+        if (known.has(entry.value)) continue
+        known.add(entry.value)
+        let id = entry.id
+        while (findReference(project, id) !== undefined) id = createId('ref-')
+        project.references.push({
+          id,
+          kind: 'link',
+          name: entry.name,
+          value: entry.value,
+          description: '',
+          staleSince: 0,
+        })
+      }
+      return null
+    }
+    case 'plan.set': {
+      // A draft, not cards: it is validated here and written once, and only
+      // `plan.apply` turns it into subtasks.
+      if (project === undefined) return 'unknown_project'
+      if (typeof op.summary !== 'string') return 'invalid_field'
+      const checked = validatePlanItems(project, op.items)
+      if (checked.code !== undefined) return checked.code
+      project.plan = {
+        id: createId('plan-'),
+        summary: bounded(op.summary.trim(), MAX_NOTE_LENGTH),
+        createdAt: Date.now(),
+        items: checked.items,
+      }
+      return null
+    }
+    case 'plan.apply': {
+      // Turn the draft into real cards, in item order, at the task defaults.
+      // A title that already exists is skipped rather than duplicated: the board
+      // must never hold two cards for the same instruction.
+      if (project === undefined) return 'unknown_project'
+      const plan = project.plan
+      if (!isRecord(plan) || !Array.isArray(plan.items) || plan.items.length === 0) return 'unknown_plan'
+      const at = Date.now()
+      const knownRefs = new Set(project.references.map(entry => entry.id))
+      const taken = new Set(project.tasks.map(task => task.title))
+      const skippedTitles = []
+      let created = 0
+      for (const item of plan.items) {
+        if (taken.has(item.title)) {
+          skippedTitles.push(item.title)
+          continue
+        }
+        taken.add(item.title)
+        const task = taskFromPlanItem(item, at)
+        // A corrupted draft could carry an item no task can be built from; the
+        // rest still lands instead of failing the whole batch.
+        if (task === null) {
+          taken.delete(item.title)
+          continue
+        }
+        // A reference removed since the draft was written is a dead link.
+        task.refs = task.refs.filter(ref => knownRefs.has(ref))
+        project.tasks.push(task)
+        created += 1
+      }
+      // The draft is confirmed: it is no longer a draft once the cards exist.
+      project.plan = null
+      // The op reports what it did, so a caller reads the outcome without
+      // diffing the board.
+      op.result = { created, skippedTitles }
+      return null
+    }
+    case 'plan.discard': {
+      // Dropping a draft is deliberately not an error when there is nothing to
+      // drop: a stale panel button must not surface as a failure.
+      if (project === undefined) return 'unknown_project'
+      project.plan = null
+      return null
     }
     // Compatibility aliases: the version-9 entry operations still work, they
     // just describe a `link` reference now, and `path` is called `value`.

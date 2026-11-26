@@ -367,6 +367,7 @@ if (factory === null) {
 
 const hostModulePath = process.argv[3]
 let hostBoard
+let hostVerify = null
 let hostState = null
 let hostArchive = { count: 0, projects: [] }
 /** Every operation the client sent, kept so the harness can prove which
@@ -407,8 +408,48 @@ global.fetch = async (url, init) => {
         board: hostState.board,
       })
     }
-    const outcome = hostBoard.applyOps(hostState.board, payload.ops, 'ui')
+    // Mirror host/routes.js: archive operations belong to the cold-storage
+    // surface, everything else is prepared first (the material scan expands
+    // directories) and then applied by the pure board layer. Indices are kept so
+    // a result can point back at the operation the caller sent.
+    const boardOps = []
+    const boardIndexes = []
+    payload.ops.forEach((op, index) => {
+      if (op !== null && typeof op === 'object' && op.type === 'board.archive') return
+      boardOps.push(op)
+      boardIndexes.push(index)
+    })
+    const prepared = hostVerify !== null && typeof hostVerify.prepareBatch === 'function'
+      ? await hostVerify.prepareBatch(hostState.board, boardOps)
+      : boardOps
+    const outcome = hostBoard.applyOps(hostState.board, prepared, 'ui')
     hostState.board = outcome.board
+    const results = []
+    const refused = new Set(outcome.rejected.map(entry => entry.index))
+    boardOps.forEach((op, position) => {
+      if (refused.has(position)) return
+      if (op === null || typeof op !== 'object') return
+      const applied = prepared[position]
+      if (op.type === 'reference.intake' && Array.isArray(applied.added)) {
+        results.push({
+          index: boardIndexes[position],
+          type: 'reference.intake',
+          added: applied.added,
+          missing: Array.isArray(applied.missing) ? applied.missing : [],
+          skipped: Array.isArray(applied.skipped) ? applied.skipped : [],
+          truncated: applied.truncated === true,
+        })
+        return
+      }
+      if (op.type === 'plan.apply' && applied.result !== undefined) {
+        results.push({
+          index: boardIndexes[position],
+          type: 'plan.apply',
+          created: applied.result.created,
+          skippedTitles: applied.result.skippedTitles,
+        })
+      }
+    })
     // Emulate the Host archive surface: cold-stored cards leave the board.
     const keptOps = []
     for (const op of payload.ops) {
@@ -432,6 +473,7 @@ global.fetch = async (url, init) => {
       revision: hostState.board.revision,
       board: hostState.board,
       rejected: outcome.rejected,
+      results,
     })
   }
   return jsonResponse(404, { ok: false, code: 'not_found' })
@@ -511,6 +553,14 @@ const fakeCtx = {
 
 ;(async () => {
   hostBoard = await import(require('node:url').pathToFileURL(hostModulePath).href)
+  // The real HTTP route prepares each batch (filesystem probes) before the
+  // board layer runs; the fake Host follows the same order so a material scan
+  // behaves here exactly as it does through the route.
+  try {
+    hostVerify = await import(require('node:url').pathToFileURL(path.join(path.dirname(hostModulePath), 'verify.js')).href)
+  } catch (error) {
+    hostVerify = null
+  }
   resetHost()
   const plugin = factory(name => (name === 'react' ? React : undefined))
   console.log('\n[1] plugin surface')
@@ -579,7 +629,7 @@ const fakeCtx = {
   check('blocked forces red', testHelpers.projectTone({ tasks: [{ progress: 100, blocked: true }] }) === 'red')
   check('85% is green', testHelpers.projectTone({ tasks: [{ progress: 85, blocked: false }] }) === 'green')
   check('empty project is idle', testHelpers.projectTone({ tasks: [] }) === 'idle')
-  check('round-trip keeps version 10', JSON.parse(testHelpers.serializeProjects(migrated)).version === 10)
+  check('round-trip keeps version 11', JSON.parse(testHelpers.serializeProjects(migrated)).version === 11)
 
   // Version 9 held project material in `shared` (free text) plus a
   // `sharedEntries` list; version 10 folds both into one typed list.
@@ -606,7 +656,7 @@ const fakeCtx = {
   check('the legacy fields are dropped from memory', !('shared' in migratedV9[0]) && !('sharedEntries' in migratedV9[0]), JSON.stringify(Object.keys(migratedV9[0])))
   const v10RoundTrip = testHelpers.parseProjects(testHelpers.serializeProjects(migratedV9))
   check('migrating a v9 document twice does not duplicate', v10RoundTrip[0].references.length === 2, JSON.stringify(v10RoundTrip[0].references))
-  check('the migrated document writes version 10', JSON.parse(testHelpers.serializeProjects(migratedV9)).version === 10)
+  check('the migrated document writes version 11', JSON.parse(testHelpers.serializeProjects(migratedV9)).version === 11)
 
   /* ------------------------------------------------------ UI interaction */
 
@@ -638,7 +688,7 @@ const fakeCtx = {
   change(byAria('新建项目'), 'Alpha 项目')
   submit(formOf(byAria('新建项目')))
   let doc = stored()
-  check('document version 10', doc && doc.version === 10, doc && String(doc.version))
+  check('document version 11', doc && doc.version === 11, doc && String(doc.version))
   check('project created', doc && doc.projects.length === 1 && doc.projects[0].name === 'Alpha 项目')
   check('project starts with no references', doc && Array.isArray(doc.projects[0].references) && doc.projects[0].references.length === 0, doc && JSON.stringify(doc.projects[0]))
   check('detail pane shows the project', textOf().includes('Alpha 项目'))
@@ -1621,16 +1671,309 @@ console.log('\n[43] the project rail collapses and remembers it')
   check('the control is still the only one', railButtons().length === 1, String(railButtons().length))
   check('project names come back', textOf().includes('甲项目') && textOf().includes('乙项目'))
 
-console.log('\n[44] the client only writes the version-10 reference operations')
+console.log('\n[44] the client only writes the version-11 reference operations')
   check('the local mirror stores references, never the legacy fields',
     stored().projects.every(project => Array.isArray(project.references) && !('shared' in project) && !('sharedEntries' in project)),
     JSON.stringify(Object.keys(stored().projects[0])))
   check('no legacy shared operation was sent',
     !sentOps.some(op => op.type === 'project.setShared' || String(op.type).startsWith('sharedEntry.')),
     JSON.stringify([...new Set(sentOps.map(op => op.type))]))
-  check('references are written through the version-10 operations',
+  check('references are written through the version-11 operations',
     ['reference.add', 'reference.update', 'reference.remove'].every(type => sentOps.some(op => op.type === type)),
     JSON.stringify([...new Set(sentOps.map(op => op.type))]))
+
+console.log('\n[45] version 11: the draft plan and its migration')
+  // Version 10 has no plan field at all: reading one must yield a null draft,
+  // and writing it back must already be version 11.
+  const v10Doc = JSON.stringify({
+    version: 10,
+    projects: [{
+      id: 'p-v10-plan',
+      name: 'v10 项目',
+      references: [{ id: 'r-v10', kind: 'link', name: '旧文档', value: 'docs/old.md', description: '', staleSince: 0 }],
+      tasks: [{ id: 't-v10', title: '旧卡片' }],
+      memory: [],
+      trash: [],
+    }],
+  })
+  const migratedV10 = testHelpers.parseProjects(v10Doc)
+  check('a version-10 document is rewritten as version 11', JSON.parse(testHelpers.serializeProjects(migratedV10)).version === 11)
+  check('a version-10 project migrates to a null plan', migratedV10.length === 1 && migratedV10[0].plan === null, JSON.stringify(migratedV10[0] && migratedV10[0].plan))
+  check('material and draft locale text is registered in both locales',
+    dictionaries.greenlight.zh['references.intake'] === '扫描材料'
+    && dictionaries.greenlight.en['references.intake'] === 'Scan materials'
+    && dictionaries.greenlight.zh['references.intakePlaceholder'] === '粘贴本地路径或链接，一行一个'
+    && dictionaries.greenlight.en['references.intakePlaceholder'] === 'Paste local paths or links, one per line'
+    && dictionaries.greenlight.zh['plan.section'] === '拆解草案'
+    && dictionaries.greenlight.en['plan.section'] === 'Draft plan',
+    JSON.stringify({ zh: dictionaries.greenlight.zh['plan.section'], en: dictionaries.greenlight.en['plan.section'] }))
+
+  const planSeed = {
+    version: 10,
+    revision: 61,
+    projects: [{
+      id: 'p-plan',
+      name: '草案项目',
+      references: [{ id: 'ref-plan', kind: 'link', name: '接口文档', value: 'docs/api.md', description: '', staleSince: 0 }],
+      tasks: [],
+      memory: [],
+      trash: [],
+      plan: {
+        id: 'plan-1',
+        summary: '把旧静态站迁到新构建链路，先文档后构建',
+        createdAt: Date.now(),
+        items: [
+          // `bogus` is not part of the shape: a hand-edited document must not
+          // smuggle extra state into the board through the draft.
+          { title: '整理目录结构', note: '输出目录树与依赖清单', priority: 'normal', tags: ['docs'], refs: ['ref-plan'], deliverables: ['docs/tree.md'], bogus: 'ignored' },
+          { title: '迁移构建脚本', note: '', priority: 'high', tags: [], refs: [], deliverables: [] },
+          { title: '首页性能优化', note: '很长的说明'.repeat(20), priority: 'urgent', tags: ['perf'], refs: [], deliverables: [] },
+        ],
+      },
+    }],
+  }
+  const planParsed = testHelpers.parseProjects(JSON.stringify(planSeed))[0]
+  check('a stored draft plan is parsed', planParsed.plan !== null && planParsed.plan.items.length === 3, JSON.stringify(planParsed.plan))
+  check('draft items keep only the defined fields',
+    JSON.stringify(Object.keys(planParsed.plan.items[0]).sort()) === JSON.stringify(['deliverables', 'note', 'priority', 'refs', 'tags', 'title']),
+    JSON.stringify(Object.keys(planParsed.plan.items[0])))
+  check('draft items resolve their references against the project',
+    JSON.stringify(planParsed.plan.items[0].refs) === JSON.stringify(['ref-plan']), JSON.stringify(planParsed.plan.items[0].refs))
+  const danglingPlanProject = testHelpers.parseProjects(JSON.stringify({
+    version: 11,
+    projects: [{ id: 'p-dangle', name: '悬空引用', references: [], tasks: [], memory: [], trash: [], plan: { id: 'plan-2', summary: '', createdAt: 1, items: [{ title: '只有悬空引用', refs: ['missing-ref'] }] } }],
+  }))
+  check('a draft item drops references that do not exist',
+    danglingPlanProject[0].plan.items[0].refs.length === 0, JSON.stringify(danglingPlanProject[0].plan.items[0].refs))
+  const emptyPlanProject = testHelpers.parseProjects(JSON.stringify({
+    version: 11,
+    projects: [{ id: 'p-empty', name: '空草案', references: [], tasks: [], memory: [], trash: [], plan: { id: 'plan-3', summary: 'x', createdAt: 1, items: [] } }],
+  }))
+  check('a draft without usable items is dropped', emptyPlanProject[0].plan === null, JSON.stringify(emptyPlanProject[0].plan))
+
+  await mount({ seedHost: planSeed })
+  await settle(400)
+  check('a draft renders as its own card', textOf().includes('拆解草案'), textOf().slice(0, 260))
+  check('the draft card shows the plan summary', textOf().includes('把旧静态站迁到新构建链路，先文档后构建'), textOf().slice(0, 320))
+  check('the draft card lists every item title', ['整理目录结构', '迁移构建脚本', '首页性能优化'].every(title => textOf().includes(title)))
+  check('the draft card badges the item count', textOf().includes('3 项'), textOf().slice(0, 320))
+  check('a draft item shows its note', textOf().includes('输出目录树与依赖清单'))
+  const longNote = '很长的说明'.repeat(20)
+  check('a long item note is cut to eighty characters',
+    textOf().includes(longNote.slice(0, 80)) && !textOf().includes(longNote),
+    textOf().length + ' / note=' + longNote.length)
+  check('a draft item badges its references', textOf().includes('引用 1'), textOf().slice(0, 400))
+  const draftOrder = textOf()
+  check('the draft card sits between the references and the subtasks',
+    draftOrder.indexOf('项目资料') >= 0
+    && draftOrder.indexOf('拆解草案') > draftOrder.indexOf('项目资料')
+    && draftOrder.indexOf('这个项目还没有子任务') > draftOrder.indexOf('拆解草案'),
+    JSON.stringify({ references: draftOrder.indexOf('项目资料'), draft: draftOrder.indexOf('拆解草案'), tasks: draftOrder.indexOf('这个项目还没有子任务') }))
+  const applyPlanButton = byButtonText('全部落卡')
+  check('the draft offers a primary apply control',
+    applyPlanButton !== null && applyPlanButton.props.className === 'dsh-board__primary',
+    applyPlanButton && applyPlanButton.props.className)
+
+  // A draft is a proposal, so it must be editable before it becomes cards.
+  const editPlanButton = byButtonText('编辑草案')
+  check('the draft offers an edit control', editPlanButton !== null)
+  click(editPlanButton)
+  await settle(300)
+  const planTitleInputs = () => findAll(element => element.props !== undefined && element.props['aria-label'] === '任务标题')
+  check('editing the draft shows one title field per item', planTitleInputs().length === 3, String(planTitleInputs().length))
+  const summaryInput = byAria('拆解说明')
+  check('editing the draft seeds the summary', summaryInput !== null && summaryInput.props.value === '把旧静态站迁到新构建链路，先文档后构建', summaryInput && summaryInput.props.value)
+  check('editing the draft seeds the first title', planTitleInputs()[0].props.value === '整理目录结构', planTitleInputs()[0].props.value)
+  change(planTitleInputs()[0], '整理目录结构（改）')
+  const planDeleteButtons = () => findAll(element => element.props !== undefined && element.props['aria-label'] === '删除这一项')
+  check('every draft row can be removed', planDeleteButtons().length === 3, String(planDeleteButtons().length))
+  click(planDeleteButtons()[2])
+  await settle(200)
+  check('removing a row drops it from the editor', planTitleInputs().length === 2, String(planTitleInputs().length))
+  click(byButtonText('添加一项'))
+  await settle(200)
+  check('a row can be added to the editor', planTitleInputs().length === 3, String(planTitleInputs().length))
+  change(planTitleInputs()[2], '补一份迁移说明')
+  const planSetBefore = sentOps.filter(op => op.type === 'plan.set').length
+  submit(formOf(byAria('拆解说明')))
+  await settle(600)
+  await flush()
+  const planSetOps = sentOps.filter(op => op.type === 'plan.set')
+  check('saving the edited draft sends plan.set', planSetOps.length === planSetBefore + 1, JSON.stringify(sentOps.map(op => op.type)))
+  const savedPlan = planSetOps[planSetOps.length - 1]
+  check('the edit keeps the summary', savedPlan.summary === '把旧静态站迁到新构建链路，先文档后构建', savedPlan.summary)
+  check('the edit saves the renamed, kept and added rows',
+    savedPlan.items.length === 3
+    && savedPlan.items[0].title === '整理目录结构（改）'
+    && savedPlan.items[1].title === '迁移构建脚本'
+    && savedPlan.items[2].title === '补一份迁移说明',
+    JSON.stringify(savedPlan.items.map(item => item.title)))
+  check('the edit carries over what the page does not show',
+    JSON.stringify(savedPlan.items[0].refs) === JSON.stringify(['ref-plan'])
+    && JSON.stringify(savedPlan.items[0].deliverables) === JSON.stringify(['docs/tree.md'])
+    && savedPlan.items[0].note === '输出目录树与依赖清单',
+    JSON.stringify(savedPlan.items[0]))
+  check('the host stored the edited draft',
+    hostState.board.projects[0].plan !== null && hostState.board.projects[0].plan.items[2].title === '补一份迁移说明',
+    JSON.stringify(hostState.board.projects[0].plan && hostState.board.projects[0].plan.items.map(item => item.title)))
+  check('the read-only card shows the edited title', textOf().includes('整理目录结构（改）'), textOf().slice(0, 320))
+  // Cancelling must leave the stored draft alone.
+  const planSetsAfterSave = sentOps.filter(op => op.type === 'plan.set').length
+  click(byButtonText('编辑草案'))
+  await settle(300)
+  change(planTitleInputs()[0], '这个不该保存')
+  click(byButtonText('取消编辑'))
+  await settle(300)
+  check('cancelling an edit sends nothing', sentOps.filter(op => op.type === 'plan.set').length === planSetsAfterSave, JSON.stringify(sentOps.map(op => op.type)))
+  check('cancelling an edit keeps the stored draft', stored().projects[0].plan.items[0].title === '整理目录结构（改）', stored().projects[0].plan.items[0].title)
+  check('cancelling returns the card to read-only', byButtonText('全部落卡') !== null && byButtonText('保存草案') === null)
+  // A draft whose rows are all blank cannot become cards.
+  click(byButtonText('编辑草案'))
+  await settle(300)
+  for (let row = 0; row < planTitleInputs().length; row += 1) change(planTitleInputs()[row], '   ')
+  const planSetsBeforeBlank = sentOps.filter(op => op.type === 'plan.set').length
+  submit(formOf(byAria('拆解说明')))
+  await settle(400)
+  check('an all-blank draft is refused on the page', sentOps.filter(op => op.type === 'plan.set').length === planSetsBeforeBlank, JSON.stringify(sentOps.map(op => op.type)))
+  check('the refusal is explained', textOf().includes('至少需要一项'), textOf().slice(0, 400))
+  click(byButtonText('取消编辑'))
+  await settle(300)
+  check('the draft survives the refused save', stored().projects[0].plan !== null && stored().projects[0].plan.items.length === 3)
+
+  click(applyPlanButton)
+  await settle(600)
+  await flush()
+  check('applying the draft sends plan.apply',
+    sentOps.some(op => op.type === 'plan.apply' && op.projectId === 'p-plan'),
+    JSON.stringify(sentOps.map(op => op.type)))
+  const appliedProject = stored().projects[0]
+  check('the draft is cleared after applying', appliedProject.plan === null, JSON.stringify(appliedProject.plan))
+  check('the draft card disappears after applying', !textOf().includes('拆解草案'), textOf().slice(0, 320))
+  check('the draft items became subtasks',
+    appliedProject.tasks.length === 3 && appliedProject.tasks.every(task => task.status === 'todo' && task.progress === 0),
+    JSON.stringify(appliedProject.tasks.map(task => ({ title: task.title, status: task.status, progress: task.progress }))))
+  const firstAppliedTask = appliedProject.tasks[0] === undefined ? {} : appliedProject.tasks[0]
+  check('the created subtasks carry the item fields',
+    firstAppliedTask.note === '输出目录树与依赖清单'
+    && firstAppliedTask.priority === 'normal'
+    && JSON.stringify(firstAppliedTask.tags) === JSON.stringify(['docs'])
+    && JSON.stringify(firstAppliedTask.refs) === JSON.stringify(['ref-plan'])
+    && JSON.stringify(firstAppliedTask.deliverables) === JSON.stringify(['docs/tree.md']),
+    JSON.stringify(firstAppliedTask))
+  check('the host recorded the created subtasks', hostState.board.projects[0].tasks.length === 3, String(hostState.board.projects[0].tasks.length))
+
+  await mount({ seedHost: planSeed })
+  await settle(400)
+  const discardPlanButton = byButtonText('丢弃草案')
+  check('the draft offers a discard control', discardPlanButton !== null)
+  click(discardPlanButton)
+  check('discarding the draft asks first', hasConfirm())
+  cancelConfirm()
+  await settle(200)
+  check('cancelling keeps the draft', textOf().includes('拆解草案') && stored().projects[0].plan !== null)
+  click(byButtonText('丢弃草案'))
+  confirmNow('丢弃')
+  await settle(600)
+  await flush()
+  check('discarding the draft sends plan.discard',
+    sentOps.some(op => op.type === 'plan.discard' && op.projectId === 'p-plan'),
+    JSON.stringify(sentOps.map(op => op.type)))
+  check('the draft is cleared after discarding', stored().projects[0].plan === null, JSON.stringify(stored().projects[0].plan))
+  check('the draft card disappears after discarding', !textOf().includes('拆解草案'), textOf().slice(0, 320))
+
+  await mount({ seedHost: { version: 10, revision: 51, projects: [{ id: 'p-noplan', name: '无草案项目', references: [], tasks: [], memory: [], trash: [] }] } })
+  await settle(300)
+  check('a project without a draft renders no draft card', !textOf().includes('拆解草案'), textOf().slice(0, 220))
+  check('a project without a draft offers no apply control', byButtonText('全部落卡') === null)
+
+console.log('\n[46] material intake: scan local paths and links into references')
+  const materialDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-greenlight-intake-'))
+  fs.mkdirSync(path.join(materialDir, 'docs'))
+  fs.writeFileSync(path.join(materialDir, 'a.md'), '# A\n')
+  fs.writeFileSync(path.join(materialDir, 'docs', 'b.md'), '# B\n')
+  const firstMaterial = path.join(materialDir, 'a.md')
+  const secondMaterial = path.join(materialDir, 'docs', 'b.md')
+  const materialSeed = {
+    version: 10,
+    revision: 71,
+    projects: [{ id: 'p-mat', name: '材料项目', rootDir: materialDir, references: [], tasks: [], memory: [], trash: [] }],
+  }
+  await mount({ seedHost: materialSeed })
+  await settle(300)
+  const intakeBox = byAria('粘贴本地路径或链接，一行一个')
+  check('the material input line exists', intakeBox !== null && intakeBox.type === 'textarea', intakeBox && String(intakeBox.type))
+  check('the material scan control exists', byButtonText('扫描材料') !== null)
+  // Blank lines, stray whitespace and a repeated path must not reach the Host.
+  change(intakeBox, '  ' + firstMaterial + '  \n\n' + secondMaterial + '\n' + firstMaterial)
+  submit(formOf(intakeBox))
+  await settle(700)
+  await flush()
+  const intakeOp = sentOps.filter(op => op.type === 'reference.intake').pop()
+  check('scanning materials sends reference.intake', !!intakeOp && intakeOp.projectId === 'p-mat', JSON.stringify(intakeOp))
+  check('the pasted block becomes a path array',
+    !!intakeOp && JSON.stringify(intakeOp.paths) === JSON.stringify([firstMaterial, secondMaterial]),
+    intakeOp && JSON.stringify(intakeOp.paths))
+  check('the scan result line reports what the Host did',
+    textOf().includes('已添加 2 条资料（跳过 0 条重复，0 条未找到）'), textOf().slice(-320))
+  const intakeRefs = stored().projects[0].references
+  check('the scanned paths became link references',
+    intakeRefs.length === 2 && intakeRefs.every(reference => reference.kind === 'link'),
+    JSON.stringify(intakeRefs))
+  check('the scanned references reach the host', hostState.board.projects[0].references.length === 2, String(hostState.board.projects[0].references.length))
+  const intakeValues = intakeRefs.map(reference => reference.value.replace(/\\/g, '/'))
+  check('the scanned values are recorded relative to the project root',
+    intakeValues.includes('a.md') && intakeValues.includes('docs/b.md'), JSON.stringify(intakeValues))
+
+  // Scanning the same paths again adds nothing and says so.
+  change(byAria('粘贴本地路径或链接，一行一个'), firstMaterial + '\n' + secondMaterial)
+  submit(formOf(byAria('粘贴本地路径或链接，一行一个')))
+  await settle(700)
+  await flush()
+  check('a repeated scan adds no duplicate references', hostState.board.projects[0].references.length === 2, JSON.stringify(hostState.board.projects[0].references.map(reference => reference.value)))
+  check('the repeated scan reports every path as a duplicate',
+    textOf().includes('已添加 0 条资料（跳过 2 条重复，0 条未找到）'), textOf().slice(-320))
+
+  // A path that does not exist is requested from the Host and adds nothing.
+  const missingMaterial = path.join(materialDir, 'gone.md')
+  change(byAria('粘贴本地路径或链接，一行一个'), missingMaterial)
+  submit(formOf(byAria('粘贴本地路径或链接，一行一个')))
+  await settle(700)
+  await flush()
+  const missingIntakeOp = sentOps.filter(op => op.type === 'reference.intake').pop()
+  check('a missing path is still handed to the Host',
+    !!missingIntakeOp && JSON.stringify(missingIntakeOp.paths) === JSON.stringify([missingMaterial]),
+    missingIntakeOp && JSON.stringify(missingIntakeOp.paths))
+  check('a missing path adds no reference', hostState.board.projects[0].references.length === 2, JSON.stringify(hostState.board.projects[0].references.map(reference => reference.value)))
+  check('the missing path is reported as not found',
+    textOf().includes('已添加 0 条资料（跳过 0 条重复，1 条未找到）'), textOf().slice(-320))
+
+  // A Host that does not report per-op results still gets a usable line: the
+  // added entries are counted from the adopted board, the other counters are 0.
+  fs.writeFileSync(path.join(materialDir, 'docs', 'c.md'), '# C\n')
+  const thirdMaterial = path.join(materialDir, 'docs', 'c.md')
+  const realFetchWithResults = global.fetch
+  global.fetch = async (url, init) => {
+    const response = await realFetchWithResults(url, init)
+    if (url !== '/greenlight/ops' || typeof response.json !== 'function') return response
+    const body = await response.json()
+    if (body !== null && typeof body === 'object') delete body.results
+    return { ok: response.ok, status: response.status, json: async () => body }
+  }
+  change(byAria('粘贴本地路径或链接，一行一个'), thirdMaterial)
+  submit(formOf(byAria('粘贴本地路径或链接，一行一个')))
+  await settle(700)
+  await flush()
+  global.fetch = realFetchWithResults
+  check('a scan without Host results falls back to the added count',
+    textOf().includes('已添加 1 条资料（跳过 0 条重复，0 条未找到）'), textOf().slice(-320))
+  check('the fallback scan still reached the host', hostState.board.projects[0].references.length === 3, String(hostState.board.projects[0].references.length))
+
+  const localV10 = JSON.stringify({ version: 10, projects: [{ id: 'p-local-v10', name: '本地 v10 项目', references: [], tasks: [], memory: [], trash: [] }] })
+  await mount({ seedLocal: localV10 })
+  await settle(700)
+  await flush()
+  check('a version-10 browser mirror is rewritten as version 11', stored() !== null && stored().version === 11, stored() && String(stored().version))
+  check('the mirrored project carries a null draft', stored() !== null && stored().projects[0].plan === null, stored() && JSON.stringify(stored().projects[0].plan))
 
   console.log('\n' + (failures === 0 ? 'ALL ' + checks + ' CHECKS PASSED' : failures + ' of ' + checks + ' CHECKS FAILED'))
   process.exit(failures === 0 ? 0 : 1)

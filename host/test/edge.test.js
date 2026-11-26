@@ -146,13 +146,13 @@ test('diagnostics report the last mount', async () => {
   }
   apply(ctx, { boardFile: join(dir, 'board.json') })
   const state = diagnostics()
-  assert.equal(state.registered.length, 14)
+  assert.equal(state.registered.length, 17)
   assert.deepEqual(state.errors, [])
   assert.equal(state.serviceMissing, false)
 
   const diagRoute = routes.find(route => route.path === '/greenlight/diagnostics')
   const body = await (await diagRoute.resource(new Request('http://127.0.0.1/greenlight/diagnostics'))).json()
-  assert.equal(body.tools.registered.length, 14)
+  assert.equal(body.tools.registered.length, 17)
   assert.equal(body.boardFile, join(dir, 'board.json'))
 })
 

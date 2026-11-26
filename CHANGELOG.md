@@ -2,6 +2,30 @@
 
 All notable changes to this project are documented here.
 
+## 0.3.0
+
+**从材料开工**
+- 材料入口：在「项目资料」里粘贴本地路径或链接（一行一个）→「扫描材料」。
+  目录递归展开，自动跳过 `.git`、`node_modules`、`dist`、`build`、`out`、`target`、
+  `coverage`、`.next`、`vendor`、`__pycache__`；每个输入目录最多收 200 个文件；
+  路径按项目根目录记为相对路径；扫不到的报「未找到」，已存在的报「跳过重复」
+- AI 拆解：agent 读材料后用 `greenlight_intake` 把文件/链接收进项目资料，
+  再用 `greenlight_plan_set` 写一份**拆解草案**——草案只是提案，不建卡
+- 草案卡片（位于项目资料与子任务之间）：显示摘要、每项标题/说明/引用数，可
+  **编辑**（改摘要、改标题与说明、删项、加项，保存走 `plan.set`）、
+  **全部落卡**（`plan.apply`，重名任务自动跳过）、**丢弃草案**（需确认）
+- 编辑保存会保留界面上看不到的字段（`refs` / `deliverables` / `tags` / `priority`），
+  所以 AI 给的引用不会因为改了个标题就丢
+
+**工具**
+- 新增 `greenlight_intake`（扫描路径/链接，默认 dryRun 只报告）、`greenlight_plan_set`、
+  `greenlight_plan_apply`；工具总数 14 → **17**
+
+**数据**
+- 数据版本 10 → **11**：`project.plan`（null 或草案）；老文档读取时自动补 `null`
+- `POST /greenlight/ops` 响应新增可选的 `results` 数组（intake 的 added/missing/skipped、
+  plan.apply 的 created/skippedTitles），旧客户端忽略即可
+
 ## 0.2.1
 
 发布链路本身的变化，功能与 0.2.0 一致。

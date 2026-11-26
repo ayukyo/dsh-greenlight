@@ -4,7 +4,7 @@
  */
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { mkdtemp } from 'node:fs/promises'
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -272,4 +272,80 @@ test('board.import seeds an empty board through the HTTP surface', async () => {
   assert.equal(imported.status, 200)
   assert.equal(imported.body.board.projects[0].tasks[0].status, 'done')
   assert.equal(imported.body.board.projects[0].tasks[0].note, '会话X')
+})
+
+test('POST ops reports per-operation results for material intake and for plan landing', async () => {
+  const { store, dir } = await makeStore()
+  const opsRoute = createBoardRoutes(store).find(route => route.path === '/greenlight/ops')
+  const headers = { [GUARD_HEADER]: '1' }
+  const root = join(dir, 'project')
+  await mkdir(join(root, 'docs'), { recursive: true })
+  await mkdir(join(root, 'node_modules'), { recursive: true })
+  await writeFile(join(root, 'a.md'), '# A', 'utf8')
+  await writeFile(join(root, 'docs', 'b.md'), '# B', 'utf8')
+  await writeFile(join(root, 'node_modules', 'x.js'), 'x', 'utf8')
+
+  const setup = await callOps(opsRoute, {
+    headers,
+    body: JSON.stringify({ revision: 0, ops: [{ type: 'project.add', id: 'p1', name: 'Alpha', rootDir: root }] }),
+  })
+  assert.equal(setup.status, 200)
+  assert.deepEqual(setup.body.results, [], 'an operation with no stated outcome reports none')
+
+  // The scan result reaches the panel, which is where the "已添加 N 条" line
+  // gets its numbers from.
+  const intake = await callOps(opsRoute, {
+    headers,
+    body: JSON.stringify({ revision: 1, ops: [{ opId: 'scan', type: 'reference.intake', projectId: 'p1', paths: [root] }] }),
+  })
+  assert.equal(intake.status, 200)
+  assert.equal(intake.body.results.length, 1)
+  const scan = intake.body.results[0]
+  assert.equal(scan.index, 0, 'the result points at the operation the caller sent')
+  assert.equal(scan.type, 'reference.intake')
+  assert.deepEqual(scan.added.map(entry => entry.value), ['a.md', 'docs/b.md'])
+  assert.deepEqual(scan.missing, [])
+  assert.deepEqual(scan.skipped, [])
+  assert.equal(scan.truncated, false)
+  assert.deepEqual(intake.body.board.projects[0].references.map(entry => entry.value), ['a.md', 'docs/b.md'])
+
+  // A second scan reports the duplicates instead of adding them again.
+  const again = await callOps(opsRoute, {
+    headers,
+    body: JSON.stringify({ revision: 2, ops: [{ type: 'reference.intake', projectId: 'p1', paths: [root] }] }),
+  })
+  assert.deepEqual(again.body.results[0].added, [])
+  assert.deepEqual(again.body.results[0].skipped, ['a.md', 'docs/b.md'])
+
+  // A draft that lands as cards reports what it created, and says which titles
+  // it had to skip.
+  const landing = await callOps(opsRoute, {
+    headers,
+    body: JSON.stringify({
+      revision: 3,
+      ops: [
+        { type: 'plan.set', projectId: 'p1', summary: '草案', items: [{ title: '整理目录结构' }, { title: '迁移构建脚本' }] },
+        { type: 'task.add', projectId: 'p1', id: 't1', title: '迁移构建脚本' },
+        { type: 'plan.apply', projectId: 'p1' },
+      ],
+    }),
+  })
+  assert.equal(landing.status, 200)
+  assert.equal(landing.body.results.length, 1, 'only the operations with an outcome report one')
+  const landed = landing.body.results[0]
+  assert.equal(landed.index, 2)
+  assert.equal(landed.type, 'plan.apply')
+  assert.equal(landed.created, 1)
+  assert.deepEqual(landed.skippedTitles, ['迁移构建脚本'])
+  assert.equal(landing.body.board.projects[0].plan, null)
+  assert.deepEqual(landing.body.board.projects[0].tasks.map(task => task.title), ['迁移构建脚本', '整理目录结构'])
+
+  // A refused operation reports no result at all.
+  const refused = await callOps(opsRoute, {
+    headers,
+    body: JSON.stringify({ revision: 4, ops: [{ type: 'plan.apply', projectId: 'nope' }] }),
+  })
+  assert.equal(refused.status, 200)
+  assert.equal(refused.body.rejected.length, 1)
+  assert.deepEqual(refused.body.results, [])
 })

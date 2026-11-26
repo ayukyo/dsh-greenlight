@@ -275,6 +275,7 @@ export function putCards(board, projectId, projectName, tasks) {
       tasks: [],
       memory: [],
       references: [],
+      plan: null,
       trash: [],
       acceptanceMode: 'auto',
       acceptanceRules: { requireEvidence: true, requireDeliverables: false, verifyDeliverables: true, requireSession: false, requireVerifiedClaim: false },

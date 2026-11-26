@@ -31,6 +31,7 @@ function messageFor(code) {
     case 'unknown_project': return '项目不存在（projectId 有误）'
     case 'unknown_task': return '子任务不存在（taskId 有误）'
     case 'unknown_reference': return '资料不存在（id 有误）'
+    case 'unknown_plan': return '还没有拆解草案（先用 greenlight_plan_set 写一份）'
     case 'invalid_field': return '参数不合法'
     case 'duplicate_id': return '该 id 已存在'
     case 'stale_status': return '子任务已不在预期的状态列，请先重新读取'
@@ -321,7 +322,7 @@ export function createBoardTools(store, options) {
     },
     {
       name: 'greenlight_project',
-      description: 'Read one project: its references (links and convention notes), its subtasks (bounded), and its recent memory entries.',
+      description: 'Read one project: its references (links and convention notes), its draft breakdown when one exists, its subtasks (bounded), and its recent memory entries.',
       parameters: {
         type: 'object',
         required: ['projectId'],
@@ -346,6 +347,7 @@ export function createBoardTools(store, options) {
                 percent: { type: 'number' },
                 tone: { type: 'string' },
                 references: { type: 'array', items: { type: 'object', additionalProperties: true } },
+                plan: { type: 'object', additionalProperties: true },
                 tasks: { type: 'array', items: { type: 'object', additionalProperties: true } },
                 memory: { type: 'array', items: { type: 'object', additionalProperties: true } },
                 truncated: { type: 'boolean' },
@@ -359,6 +361,12 @@ export function createBoardTools(store, options) {
           const references = project.references.length === 0
             ? '资料：空'
             : '资料：\n' + renderReferences(project.references)
+          // The draft sits between material and cards, where a human confirms it.
+          const plan = project.plan === null || project.plan === undefined
+            ? null
+            : '拆解草案（' + project.plan.items.length + ' 项，未落卡）'
+              + (project.plan.summary === '' ? '' : '：' + project.plan.summary)
+              + '\n' + project.plan.items.map(item => '- ' + item.title).join('\n')
           const tasks = project.tasks.length === 0
             ? '子任务：无'
             : '子任务：\n' + project.tasks.map(task =>
@@ -368,7 +376,8 @@ export function createBoardTools(store, options) {
           const memory = project.memory.length === 0
             ? '项目记忆：无'
             : '项目记忆：\n' + project.memory.map(entry => '- ' + entry.text).join('\n')
-          return [{ type: 'text', text: [head, references, tasks, memory].join('\n\n') }]
+          const blocks = [head, references, plan, tasks, memory].filter(block => block !== null)
+          return [{ type: 'text', text: blocks.join('\n\n') }]
         },
       },
       async execute(args) {
@@ -409,6 +418,7 @@ export function createBoardTools(store, options) {
               description: entry.description,
               staleSince: entry.staleSince,
             })),
+            plan: project.plan,
             tasks,
             memory,
             truncated: project.tasks.length > DETAIL_TASK_LIMIT || project.memory.length > DETAIL_MEMORY_LIMIT,
@@ -1070,6 +1080,169 @@ export function createBoardTools(store, options) {
           return { action, id, references: findProject(store.snapshot(), projectId).references, removed: true }
         }
         throw new Error('action 只能是 list / add / update / remove')
+      },
+    },
+    {
+      name: 'greenlight_intake',
+      description: 'Scan local paths and links into project material. Directories are expanded recursively, skipping dependency and build directories (.git, node_modules, dist, build, out, target, coverage, .next, vendor, __pycache__); each file becomes one link reference whose value is the path relative to the project root (absolute when the project has no root directory). dryRun defaults to true: it only reports what would be added and writes nothing.',
+      parameters: {
+        type: 'object',
+        required: ['projectId', 'paths'],
+        additionalProperties: false,
+        properties: {
+          projectId: { type: 'string' },
+          paths: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Local paths (files or directories) or http(s) links; at least one',
+          },
+          dryRun: { type: 'boolean', description: 'Defaults to true: scan and report only, without writing' },
+        },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          required: ['added', 'missing', 'skipped', 'truncated'],
+          additionalProperties: false,
+          properties: {
+            added: { type: 'array', items: { type: 'object', additionalProperties: true } },
+            missing: { type: 'array', items: { type: 'string' } },
+            skipped: { type: 'array', items: { type: 'string' } },
+            truncated: { type: 'boolean' },
+          },
+        },
+        render: (args, value) => {
+          // dryRun is on unless the caller said otherwise, which is also what the
+          // data layer does; the report says which one happened.
+          const written = args !== null && args !== undefined && args.dryRun === false
+          const lines = ['材料扫描：新增 ' + value.added.length + ' 条'
+            + '（跳过 ' + value.skipped.length + ' 条重复，' + value.missing.length + ' 条未找到）'
+            + (written ? '；已写入项目资料' : '；仅扫描，未写入')]
+          if (value.truncated) lines.push('注意：目录内文件过多，已按每个目录最多 200 个文件截断。')
+          for (const entry of value.added) lines.push('- ' + entry.name + '：' + entry.value)
+          if (value.missing.length > 0) lines.push('未找到：' + value.missing.join('、'))
+          return [{ type: 'text', text: lines.join('\n') }]
+        },
+      },
+      async execute(args) {
+        const projectId = requireString(args, 'projectId')
+        const paths = optionalStringArray(args, 'paths')
+        if (paths === undefined || paths.length === 0) throw new Error('参数 paths 至少要给一个本地路径或链接')
+        if (paths.some(path => path.trim() === '')) throw new Error('参数 paths 里不能有空路径')
+        const write = optionalBoolean(args, 'dryRun') === false
+        await store.init()
+        if (findProject(store.snapshot(), projectId) === undefined) throw new Error(messageFor('unknown_project'))
+        // The scan needs the disk, so it happens in the prepare phase; only the
+        // ledger write goes through the board layer.
+        const prepared = (await prepareBatch(store.snapshot(), [{ type: 'reference.intake', projectId, paths }]))[0]
+        const scan = {
+          added: Array.isArray(prepared.added) ? prepared.added : [],
+          missing: Array.isArray(prepared.missing) ? prepared.missing : [],
+          skipped: Array.isArray(prepared.skipped) ? prepared.skipped : [],
+          truncated: prepared.truncated === true,
+        }
+        if (!write) return scan
+        await apply(prepared)
+        // The ledger drops an entry that turned out to be a duplicate, so the
+        // report is read back from the board rather than trusted from the scan.
+        const project = findProject(store.snapshot(), projectId)
+        const values = new Set(project.references.map(entry => entry.value))
+        const added = scan.added.filter(entry => values.has(entry.value))
+        const skipped = scan.skipped.concat(
+          scan.added.filter(entry => !values.has(entry.value)).map(entry => entry.value),
+        )
+        return { added, missing: scan.missing, skipped, truncated: scan.truncated }
+      },
+    },
+    {
+      name: 'greenlight_plan_set',
+      description: 'Write a draft breakdown of one project into subtasks. This is a draft and creates no cards: a human confirms it on the board first. Writing a new draft replaces the previous one.',
+      parameters: {
+        type: 'object',
+        required: ['projectId', 'summary', 'items'],
+        additionalProperties: false,
+        properties: {
+          projectId: { type: 'string' },
+          summary: { type: 'string', description: 'One line saying what this breakdown is for' },
+          items: {
+            type: 'array',
+            description: '1 to 50 items, applied in order',
+            items: {
+              type: 'object',
+              required: ['title'],
+              additionalProperties: false,
+              properties: {
+                title: { type: 'string', description: 'Non-empty, at most 200 characters' },
+                note: { type: 'string', description: 'Optional longer description' },
+                priority: { type: 'string', enum: ['low', 'normal', 'high', 'urgent'] },
+                tags: { type: 'array', items: { type: 'string' } },
+                refs: { type: 'array', items: { type: 'string' }, description: 'Ids of existing project references' },
+                deliverables: { type: 'array', items: { type: 'string' } },
+              },
+            },
+          },
+        },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          required: ['planId', 'itemCount'],
+          additionalProperties: false,
+          properties: { planId: { type: 'string' }, itemCount: { type: 'number' } },
+        },
+        render: (_args, value) => [{
+          type: 'text',
+          text: '已写入拆解草案 ' + value.planId + '（' + value.itemCount + ' 项，未落卡）',
+        }],
+      },
+      async execute(args) {
+        const projectId = requireString(args, 'projectId')
+        const summary = requireString(args, 'summary')
+        const items = optionalObjectArray(args, 'items')
+        if (items === undefined || items.length === 0) throw new Error('参数 items 至少要有 1 项')
+        await store.init()
+        if (findProject(store.snapshot(), projectId) === undefined) throw new Error(messageFor('unknown_project'))
+        await apply({ type: 'plan.set', projectId, summary, items })
+        const plan = findProject(store.snapshot(), projectId).plan
+        return { planId: plan.id, itemCount: plan.items.length }
+      },
+    },
+    {
+      name: 'greenlight_plan_apply',
+      description: 'Turn the draft breakdown into real subtasks. Cards are created in item order in the todo column; an item whose title already exists in the project is skipped and reported in skippedTitles. The draft is cleared afterwards.',
+      parameters: {
+        type: 'object',
+        required: ['projectId'],
+        additionalProperties: false,
+        properties: { projectId: { type: 'string' } },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          required: ['created', 'skippedTitles'],
+          additionalProperties: false,
+          properties: {
+            created: { type: 'number' },
+            skippedTitles: { type: 'array', items: { type: 'string' } },
+          },
+        },
+        render: (_args, value) => [{
+          type: 'text',
+          text: '已按草案创建 ' + value.created + ' 张子任务'
+            + (value.skippedTitles.length === 0
+              ? ''
+              : '；跳过重名 ' + value.skippedTitles.length + ' 项：' + value.skippedTitles.join('、')),
+        }],
+      },
+      async execute(args) {
+        const projectId = requireString(args, 'projectId')
+        await store.init()
+        if (findProject(store.snapshot(), projectId) === undefined) throw new Error(messageFor('unknown_project'))
+        const op = { type: 'plan.apply', projectId }
+        await apply(op)
+        // The board layer reports what it did on the operation object.
+        const result = op.result === undefined ? { created: 0, skippedTitles: [] } : op.result
+        return { created: result.created, skippedTitles: result.skippedTitles }
       },
     },
     {

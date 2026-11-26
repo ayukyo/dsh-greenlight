@@ -3,11 +3,12 @@
  * Run with: node --test host/test
  */
 import assert from 'node:assert/strict'
-import { mkdtemp } from 'node:fs/promises'
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { apply, diagnostics } from '../../index.js'
+import { applyOp } from '../board.js'
 import { createStore } from '../store.js'
 import { createBoardTools } from '../tools.js'
 
@@ -100,8 +101,11 @@ test('the Host half registers routes and every tool', async () => {
   assert.deepEqual(tools.map(tool => tool.name).sort(), [
     'greenlight_acceptance',
     'greenlight_archive',
+    'greenlight_intake',
     'greenlight_memory_add',
     'greenlight_overview',
+    'greenlight_plan_apply',
+    'greenlight_plan_set',
     'greenlight_preview',
     'greenlight_project',
     'greenlight_recheck',
@@ -121,7 +125,7 @@ test('the Host half registers routes and every tool', async () => {
     assert.equal(typeof tool.execute, 'function')
   }
   const diagnostics = diagnosticsState()
-  assert.equal(diagnostics.registered.length, 14)
+  assert.equal(diagnostics.registered.length, 17)
   assert.deepEqual(diagnostics.errors, [])
   assert.equal(diagnostics.serviceMissing, false)
 })
@@ -136,7 +140,7 @@ test('the diagnostics route reports the mounted surface', async () => {
   assert.equal(response.status, 200)
   assert.equal(body.ok, true)
   assert.equal(body.plugin, 'greenlight')
-  assert.equal(body.tools.registered.length, 14)
+  assert.equal(body.tools.registered.length, 17)
   assert.equal(body.boardFile, join(dir, 'board.json'))
 })
 
@@ -481,4 +485,120 @@ test('tool renders produce model-facing text', async () => {
     '- [链接] 设计稿：docs/design.md（首页与详情页 2 版）',
     '- [链接] 旧站点备份：legacy/site.zip（已失效）',
   ].join('\n')), projectText)
+})
+
+test('the intake tool scans material, defaults to a dry run, and writes when asked', async () => {
+  const store = await makeStore()
+  const tools = createBoardTools(store)
+  const dir = await mkdtemp(join(tmpdir(), 'greenlight-intake-tool-'))
+  await mkdir(join(dir, 'docs'), { recursive: true })
+  await mkdir(join(dir, 'node_modules'), { recursive: true })
+  await writeFile(join(dir, 'a.md'), '# A', 'utf8')
+  await writeFile(join(dir, 'docs', 'b.md'), '# B', 'utf8')
+  await writeFile(join(dir, 'node_modules', 'x.js'), 'x', 'utf8')
+  await store.mutate((draft) => {
+    assert.equal(applyOp(draft, { type: 'project.add', id: 'p1', name: 'Alpha', rootDir: dir }), null)
+    return draft
+  })
+
+  const tool = toolNamed(tools, 'greenlight_intake')
+  // dryRun defaults to true: the scan reports, the board does not change.
+  const dry = await tool.execute({ projectId: 'p1', paths: [dir] }, {})
+  assert.deepEqual(dry.added.map(entry => entry.value), ['a.md', 'docs/b.md'])
+  assert.deepEqual(dry.missing, [])
+  assert.deepEqual(dry.skipped, [])
+  assert.equal(dry.truncated, false)
+  assert.equal(store.snapshot().projects[0].references.length, 0, 'a dry run writes nothing')
+  const dryText = tool.output.render({ dryRun: true }, dry)[0].text
+  assert.match(dryText, /新增 2 条（跳过 0 条重复，0 条未找到）；仅扫描，未写入/)
+
+  const written = await tool.execute({ projectId: 'p1', paths: [dir], dryRun: false }, {})
+  assert.equal(written.added.length, 2)
+  assert.deepEqual(store.snapshot().projects[0].references.map(entry => entry.value), ['a.md', 'docs/b.md'])
+  assert.match(tool.output.render({ dryRun: false }, written)[0].text, /已写入项目资料/)
+
+  // The second write skips every value the project already holds.
+  const again = await tool.execute({ projectId: 'p1', paths: [dir], dryRun: false }, {})
+  assert.equal(again.added.length, 0)
+  assert.deepEqual(again.skipped, ['a.md', 'docs/b.md'])
+  assert.match(tool.output.render({ dryRun: false }, again)[0].text, /跳过 2 条重复/)
+
+  const missingPath = join(dir, 'nope.md')
+  const absent = await tool.execute({ projectId: 'p1', paths: [missingPath], dryRun: false }, {})
+  assert.deepEqual(absent.missing, [missingPath])
+  assert.match(tool.output.render({ dryRun: false }, absent)[0].text, /1 条未找到/)
+
+  await assert.rejects(() => tool.execute({ projectId: 'p1', paths: [] }, {}), /至少要给一个/)
+  await assert.rejects(() => tool.execute({ projectId: 'p1' }, {}), /至少要给一个/)
+  await assert.rejects(() => tool.execute({ projectId: 'nope', paths: [dir] }, {}), /项目不存在/)
+})
+
+test('the plan tools write a draft, show it on the project, and apply it to cards', async () => {
+  const store = await makeStore()
+  const tools = createBoardTools(store)
+  await store.mutate((draft) => {
+    assert.equal(applyOp(draft, { type: 'project.add', id: 'p1', name: 'Alpha' }), null)
+    assert.equal(applyOp(draft, { type: 'reference.add', projectId: 'p1', id: 'ref-doc', kind: 'link', name: '设计稿', value: 'docs/design.md' }), null)
+    return draft
+  })
+  // A card that shares a title with the draft must not be duplicated.
+  const created = await toolNamed(tools, 'greenlight_task_create').execute({ projectId: 'p1', title: '迁移构建脚本' }, {})
+
+  const plan = toolNamed(tools, 'greenlight_plan_set')
+  const draft = await plan.execute({
+    projectId: 'p1',
+    summary: '把旧静态站迁到新构建链路',
+    items: [
+      { title: '整理目录结构', note: '输出目录树', priority: 'high', tags: ['docs'], refs: ['ref-doc'] },
+      { title: '迁移构建脚本' },
+      { title: '首页性能优化', deliverables: ['docs/lighthouse.md'] },
+    ],
+  }, {})
+  assert.match(draft.planId, /^plan-/)
+  assert.equal(draft.itemCount, 3)
+  assert.match(plan.output.render({}, draft)[0].text, /已写入拆解草案 plan-.*（3 项，未落卡）/)
+
+  // The detail tool renders the draft between material and cards.
+  const projectTool = toolNamed(tools, 'greenlight_project')
+  const value = await projectTool.execute({ projectId: 'p1' }, {})
+  assert.equal(value.project.plan.items.length, 3)
+  assert.equal(value.project.plan.summary, '把旧静态站迁到新构建链路')
+  const text = projectTool.output.render({}, value)[0].text
+  assert.ok(text.includes('拆解草案（3 项，未落卡）：把旧静态站迁到新构建链路'), text)
+  assert.ok(text.includes('- 整理目录结构'), text)
+  assert.ok(text.includes('- 迁移构建脚本'), text)
+  assert.ok(text.includes('- 首页性能优化'), text)
+  const materialAt = text.indexOf('资料：')
+  const draftAt = text.indexOf('拆解草案')
+  const cardsAt = text.indexOf('子任务：')
+  assert.ok(materialAt >= 0 && materialAt < draftAt && draftAt < cardsAt, 'the draft sits between material and cards:\n' + text)
+
+  // Applying creates the missing cards and skips the title that already exists.
+  const applyTool = toolNamed(tools, 'greenlight_plan_apply')
+  const applied = await applyTool.execute({ projectId: 'p1' }, {})
+  assert.equal(applied.created, 2)
+  assert.deepEqual(applied.skippedTitles, ['迁移构建脚本'])
+  assert.match(applyTool.output.render({}, applied)[0].text, /已按草案创建 2 张子任务；跳过重名 1 项/)
+  const after = store.snapshot().projects[0]
+  assert.equal(after.plan, null, 'the draft is consumed')
+  assert.equal(after.tasks.length, 3)
+  const carried = after.tasks.find(task => task.title === '整理目录结构')
+  assert.equal(carried.status, 'todo')
+  assert.equal(carried.progress, 0)
+  assert.equal(carried.note, '输出目录树')
+  assert.equal(carried.priority, 'high')
+  assert.deepEqual(carried.tags, ['docs'])
+  assert.deepEqual(carried.refs, ['ref-doc'])
+  assert.equal(after.tasks.some(task => task.id === created.taskId), true, 'the existing card is untouched')
+
+  // Once the draft is gone the section disappears from the detail tool.
+  const clearedText = projectTool.output.render({}, await projectTool.execute({ projectId: 'p1' }, {}))[0].text
+  assert.equal(clearedText.includes('拆解草案'), false)
+
+  // Errors are reported with the same vocabulary as the rest of the surface.
+  await assert.rejects(() => applyTool.execute({ projectId: 'p1' }, {}), /拆解草案/)
+  await assert.rejects(() => plan.execute({ projectId: 'p1', summary: 'x', items: [] }, {}), /items 至少要有/)
+  await assert.rejects(() => plan.execute({ projectId: 'p1', summary: 'x', items: [{ title: '' }] }, {}), /参数不合法/)
+  await assert.rejects(() => plan.execute({ projectId: 'nope', summary: 'x', items: [{ title: 'T' }] }, {}), /项目不存在/)
+  await assert.rejects(() => applyTool.execute({ projectId: 'nope' }, {}), /项目不存在/)
 })

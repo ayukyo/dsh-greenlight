@@ -361,23 +361,25 @@ test('acceptance rules are configurable per project', () => {
   assert.equal(project.rootDir, '/repo')
 })
 
-test('the document migrates to v10 with automatic acceptance as the default', () => {
+test('a version-10 document migrates to v11 with no plan and automatic acceptance', () => {
   const legacy = {
-    version: 9,
+    version: 10,
     revision: 3,
     projects: [{
       id: 'p1',
       name: '旧项目',
       references: [],
+      tasks: [{ id: 't1', title: '旧卡', status: 'done', progress: 100 }],
       memory: [],
       trash: [],
-      tasks: [{ id: 't1', title: '旧卡', status: 'done', progress: 100 }],
     }],
   }
   const board = normalizeBoard(legacy)
-  assert.equal(board.version, 10)
+  assert.equal(board.version, DOC_VERSION)
+  assert.equal(board.version, 11)
   assert.equal(board.revision, 3)
   const project = board.projects[0]
+  assert.equal(project.plan, null, 'a version-10 document has no draft breakdown')
   assert.equal(project.acceptanceMode, 'auto')
   assert.deepEqual(project.references, [])
   const task = project.tasks[0]
@@ -409,8 +411,9 @@ test('a version-9 document migrates its shared text and entries into references'
     }],
   }
   const board = normalizeBoard(legacy)
-  assert.equal(board.version, 10)
+  assert.equal(board.version, 11)
   const project = board.projects[0]
+  assert.equal(project.plan, null)
   assert.equal(project.references.length, 2, 'the text and the entry become two references')
 
   // The free text comes first, as a note.
