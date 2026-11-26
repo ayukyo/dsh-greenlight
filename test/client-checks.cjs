@@ -1068,6 +1068,10 @@ const fakeCtx = {
   change(linkSelects[0], 'sess-dispatch')
   await settle()
   check('subtask bound to the Session', stored().projects[0].tasks.some(task => task.sessionId === 'sess-dispatch'), JSON.stringify(stored().projects[0].tasks.map(task => task.sessionId)))
+  // Linking a Session does not send it anything: the card has to say so, or the
+  // Session runs the work knowing nothing about the materials or the card id.
+  check('a bound but undispatched card warns the Session has no board context',
+    textOf().includes('这个会话还没收到看板上下文'), textOf().slice(0, 400))
   const dispatchButtons = findAll(element => element.type === 'button' && childText(element) === '派给会话')
   check('dispatch is enabled once bound', dispatchButtons.some(button => button.props.disabled !== true))
   click(dispatchButtons[0])
@@ -1078,6 +1082,7 @@ const fakeCtx = {
   check('dispatched card moves to running', stored().projects[0].tasks.some(task => task.sessionId === 'sess-dispatch' && task.status === 'running'), JSON.stringify(stored().projects[0].tasks.map(task => task.status)))
   check('dispatch prompt ends with the tool instructions', prompted.length === 1 && prompted[0].text.includes('不要自己把卡片标成 done'), prompted.length === 1 ? prompted[0].text.slice(-60) : '')
   check('dispatch prompt carries the real card id', prompted.length === 1 && prompted[0].text.includes('taskId：'), prompted.length === 1 ? prompted[0].text.slice(0, 200) : '')
+  check('dispatching clears the missing-context warning', !textOf().includes('这个会话还没收到看板上下文'), textOf().slice(0, 400))
 
   console.log('\n[29] batch C1/C2: drag between columns and undo delete')
   await mount()

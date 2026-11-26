@@ -295,6 +295,7 @@ window.__ModuleLoader__.load({
       'task.syncSessionTitle': '用会话标题命名',
       'task.running': '运行中',
       'task.idle': '空闲',
+      'task.contextMissing': '这个会话还没收到看板上下文（资料、卡片 id），点「派给会话」发送',
       'task.createSessionFailed': '创建主会话失败',
       'memory.section': '项目记忆',
       'memory.hint': '同一项目的子任务共享这段上下文；条目可关联到某个子任务。',
@@ -508,6 +509,7 @@ window.__ModuleLoader__.load({
       'task.syncSessionTitle': 'Use the Session title',
       'task.running': 'Running',
       'task.idle': 'Idle',
+      'task.contextMissing': 'This Session has not received the board context (materials, card id) yet - press Dispatch to send it',
       'task.createSessionFailed': 'Creating the main Session failed',
       'memory.section': 'Project memory',
       'memory.hint': 'Subtasks in this project share this context; an entry can be linked to one subtask.',
@@ -3252,9 +3254,19 @@ window.__ModuleLoader__.load({
         }
       }
 
-      return h('div', { className: 'dsh-board__sessionRow' },
-        h('span', { className: 'dsh-board__sessionLabel' }, t('task.session')),
-        controls)
+      // Binding a Session is not the same as handing it the work: create-a-session
+      // only writes the id onto the card, so the Session still knows nothing about
+      // the materials, the memory or which card it belongs to. A card that is bound
+      // but still in `todo` has never been dispatched, which is exactly that state.
+      const needsContext = bound && task.status === 'todo'
+
+      return h('div', null,
+        h('div', { className: 'dsh-board__sessionRow' },
+          h('span', { className: 'dsh-board__sessionLabel' }, t('task.session')),
+          controls),
+        needsContext
+          ? h('p', { className: 'dsh-board__sectionHint dsh-board__contextHint', role: 'note' }, t('task.contextMissing'))
+          : null)
     }
 
     /**
