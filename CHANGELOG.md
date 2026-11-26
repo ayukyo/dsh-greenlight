@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here.
 
+## 0.2.1
+
+发布链路本身的变化，功能与 0.2.0 一致。
+
+- 发布改由 GitHub Actions 用 **Trusted Publishing**（OIDC）完成：推 `v*` tag 即发布，
+  不再需要长期 npm token，也不需要 2FA 验证码
+- 发布带 **provenance** 证明（npm 页面上可见来源），消费者可验证这个包确实由本仓库的
+  这条工作流构建
+- 工作流会先校验 tag 与 `package.json` 版本一致，再跑宿主与客户端两套测试，最后才发布
+
 ## 0.2.0
 
 **Typed references (breaking)**
