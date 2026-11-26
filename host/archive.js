@@ -278,7 +278,7 @@ export function putCards(board, projectId, projectName, tasks) {
       plan: null,
       trash: [],
       acceptanceMode: 'auto',
-      acceptanceRules: { requireEvidence: true, requireDeliverables: false, verifyDeliverables: true, requireSession: false, requireVerifiedClaim: false },
+      acceptanceRules: { requireEvidence: true, requireDeliverables: false, verifyDeliverables: true, requireSession: false, requireVerifiedClaim: false, blockOnDebt: false },
       requiredLayers: [],
       gates: { review: { requireEvidence: false, requireDeliverables: false }, done: { requireEvidence: false, requireDeliverables: false } },
       anchor: { digest: '', decisions: [], risks: [], deviations: [], updatedAt: 0 },

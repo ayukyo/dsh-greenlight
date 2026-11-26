@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented here.
 
+## 0.4.3
+
+**让"还没决定"能拦住自动验收**
+
+真实事故：一张「TB 单分析」卡，agent 提交了分析报告（8 条验证项全 pass、6 个交付物都在磁盘上），
+自动验收直接判「已完成」——但人还没决定"要不要在这个子任务里修"。根因两条，都修了：
+
+- **卡片级「需要我验收」开关补上了界面**：`task.requireHuman` 一直有效（置 true 必转人工），
+  但界面上没有控件能打开它。现在卡片「阻塞」旁有复选框，勾上后卡片显示「待我验收」
+- **新增项目规则 `blockOnDebt`（默认关）**：有未验证/待决策事项就转人工。
+  以前 `verificationDebt` 只进 `warnings` 不阻断，卡片上明明记着"还有事没定"也照样自动通过
+- `greenlight_acceptance` 可读写 `blockOnDebt`；`greenlight_task_update` 新增 `requireHuman` 参数
+- `greenlight_task_submit` 描述引导 agent：还有没定的事、或某项没验证，要写进 `pendingVerification`，
+  不要用一句完成说明盖过去
+
 ## 0.4.2
 
 **绑定了会话但还没派活时，卡片会提示**

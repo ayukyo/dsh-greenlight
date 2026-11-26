@@ -312,6 +312,80 @@ test('a human-mode project keeps tool completions in review', async () => {
   assert.match(submitted.reason, /人工验收/)
 })
 
+test('the acceptance tool reads and writes blockOnDebt', async () => {
+  const store = await makeStore()
+  const tools = createBoardTools(store)
+  await store.mutate((draft) => {
+    assert.equal(applyOp(draft, { type: 'project.add', id: 'p1', name: 'Alpha' }), null)
+    return draft
+  })
+  const tool = toolNamed(tools, 'greenlight_acceptance')
+  assert.equal(tool.parameters.properties.blockOnDebt.type, 'boolean')
+  assert.equal(tool.output.schema.properties.blockOnDebt.type, 'boolean')
+
+  const read = await tool.execute({ projectId: 'p1' }, {})
+  assert.equal(read.blockOnDebt, false, 'a project starts with the rule off')
+  const written = await tool.execute({ projectId: 'p1', blockOnDebt: true }, {})
+  assert.equal(written.blockOnDebt, true)
+  assert.equal(store.snapshot().projects[0].acceptanceRules.blockOnDebt, true)
+  assert.match(tool.output.render({}, written)[0].text, /有未验证事项就转人工：是/)
+  const cleared = await tool.execute({ projectId: 'p1', blockOnDebt: false }, {})
+  assert.equal(cleared.blockOnDebt, false)
+  assert.equal(store.snapshot().projects[0].acceptanceRules.blockOnDebt, false)
+
+  // A non-boolean is refused as invalid_field by the data layer and changes nothing.
+  await assert.rejects(() => tool.execute({ projectId: 'p1', blockOnDebt: 'yes' }, {}), /参数不合法/)
+  assert.equal(store.snapshot().projects[0].acceptanceRules.blockOnDebt, false)
+  await assert.rejects(() => tool.execute({ projectId: 'nope', blockOnDebt: true }, {}), /项目不存在/)
+})
+
+test('the update tool can require a human decision on a card', async () => {
+  const store = await makeStore()
+  const tools = createBoardTools(store)
+  await store.mutate((draft) => {
+    assert.equal(applyOp(draft, { type: 'project.add', id: 'p1', name: 'Alpha' }), null)
+    return draft
+  })
+  const update = toolNamed(tools, 'greenlight_task_update')
+  assert.equal(update.parameters.properties.requireHuman.type, 'boolean')
+  assert.equal(update.output.schema.properties.requireHuman.type, 'boolean')
+
+  // The submit tool description points open items at pendingVerification.
+  const submit = toolNamed(tools, 'greenlight_task_submit')
+  assert.ok(submit.description.includes(
+    '如果还有没定的事（例如"要不要在这里修"）、或者某项还没验证，请写进 `pendingVerification`',
+  ), submit.description)
+  assert.ok(submit.description.includes('项目开启 blockOnDebt 时这些会拦住自动验收'), submit.description)
+
+  const created = await toolNamed(tools, 'greenlight_task_create').execute({ projectId: 'p1', title: '要人拍板' }, {})
+  const marked = await update.execute({ projectId: 'p1', taskId: created.taskId, requireHuman: true }, {})
+  assert.equal(marked.requireHuman, true)
+  assert.equal(store.snapshot().projects[0].tasks[0].requireHuman, true)
+
+  // Even a verifiable completion waits for the human.
+  const submitted = await submit.execute({
+    projectId: 'p1',
+    taskId: created.taskId,
+    evidence: '全做完了',
+    progress: 100,
+    nextAction: '等人点通过',
+  }, {})
+  assert.equal(submitted.status, 'review')
+  assert.match(submitted.reason, /人工验收/)
+
+  // Clearing the flag lets the same card pass automatically.
+  const cleared = await update.execute({ projectId: 'p1', taskId: created.taskId, requireHuman: false }, {})
+  assert.equal(cleared.requireHuman, false)
+  const accepted = await submit.execute({
+    projectId: 'p1',
+    taskId: created.taskId,
+    evidence: '全做完了',
+    progress: 100,
+  }, {})
+  assert.equal(accepted.status, 'done')
+  assert.equal(accepted.acceptedBy, 'auto')
+})
+
 test('agent tools can still record progress, notes and rejection reasons', async () => {
   const store = await makeStore()
   const tools = createBoardTools(store)

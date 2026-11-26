@@ -139,11 +139,13 @@ greenlight_task_submit {
 | `verifyDeliverables` | on | Declared deliverables must exist on disk |
 | `requireSession` | off | The card must own a Session |
 | `requireVerifiedClaim` | off | At least one passing claim with a method |
+| `blockOnDebt` | off | Anything unverified or undecided sends the card to a human (the agent declares it through `pendingVerification`) |
 | `requiredLayers` | none | Verification layers the completion must cover |
 | `rootDir` | none | Base directory for relative deliverables |
 
-Auto-acceptance requires: automatic mode, no per-card human flag, progress at 100%, not blocked,
-not failed, and every enabled rule satisfied. Any gap escalates with a concrete reason.
+Auto-acceptance requires: automatic mode, no per-card human flag (the card's own "needs my
+acceptance" switch), progress at 100%, not blocked, not failed, and every enabled rule satisfied.
+Any gap escalates with a concrete reason.
 
 ## Data
 

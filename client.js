@@ -157,6 +157,8 @@ window.__ModuleLoader__.load({
       'task.untitled': '未命名子任务',
       'task.note': '任务说明（可选）',
       'task.blocked': '阻塞',
+      'task.requireHuman': '需要我验收',
+      'task.requireHumanChip': '待我验收',
       'task.delete': '删除子任务',
       'task.linkedMemory': '条记忆',
       'task.done': '已完成',
@@ -182,6 +184,7 @@ window.__ModuleLoader__.load({
       'rules.requireDeliverables': '需要交付物',
       'rules.verifyDeliverables': '校验交付物文件',
       'rules.requireSession': '需要绑定会话',
+      'project.ruleBlockOnDebt': '有未验证事项就转人工',
       'rules.rootDir': '项目根目录',
       'rules.rootDirHint': '相对交付物按此目录查找，留空则无法校验相对路径',
       'rules.missing': '交付物缺失',
@@ -371,6 +374,8 @@ window.__ModuleLoader__.load({
       'task.untitled': 'Untitled subtask',
       'task.note': 'Task description (optional)',
       'task.blocked': 'Blocked',
+      'task.requireHuman': 'Needs my acceptance',
+      'task.requireHumanChip': 'Awaiting me',
       'task.delete': 'Delete subtask',
       'task.linkedMemory': 'memory entries',
       'task.done': 'Done',
@@ -396,6 +401,7 @@ window.__ModuleLoader__.load({
       'rules.requireDeliverables': 'Requires deliverables',
       'rules.verifyDeliverables': 'Verifies deliverable files',
       'rules.requireSession': 'Requires a Session',
+      'project.ruleBlockOnDebt': 'Send to me when anything is unverified',
       'rules.rootDir': 'Project root',
       'rules.rootDirHint': 'Relative deliverables resolve here; without it they cannot be checked',
       'rules.missing': 'Missing deliverables',
@@ -2277,6 +2283,7 @@ window.__ModuleLoader__.load({
         requireDeliverables: typeof source.requireDeliverables === 'boolean' ? source.requireDeliverables : false,
         verifyDeliverables: typeof source.verifyDeliverables === 'boolean' ? source.verifyDeliverables : true,
         requireSession: typeof source.requireSession === 'boolean' ? source.requireSession : false,
+        blockOnDebt: typeof source.blockOnDebt === 'boolean' ? source.blockOnDebt : false,
       }
     }
 
@@ -3510,6 +3517,9 @@ window.__ModuleLoader__.load({
         linkedMemory > 0
           ? h('span', { className: 'dsh-board__chip' }, String(linkedMemory) + ' ' + t('task.linkedMemory'))
           : null,
+        task.requireHuman
+          ? h('span', { className: 'dsh-board__chip' }, t('task.requireHumanChip'))
+          : null,
         h('button', {
           type: 'button',
           className: 'dsh-board__delete',
@@ -3536,7 +3546,15 @@ window.__ModuleLoader__.load({
             'aria-label': t('task.blocked'),
             onChange: (event) => { actions.blocked(event.target.checked) },
           }),
-          t('task.blocked'))),
+          t('task.blocked')),
+        h('label', { className: 'dsh-board__check' },
+          h('input', {
+            type: 'checkbox',
+            checked: task.requireHuman,
+            'aria-label': t('task.requireHuman'),
+            onChange: (event) => { actions.requireHuman(event.target.checked) },
+          }),
+          t('task.requireHuman'))),
       h('div', { className: 'dsh-board__taskFields' },
         h('select', {
           className: 'dsh-board__select dsh-board__select--compact',
@@ -3843,6 +3861,7 @@ window.__ModuleLoader__.load({
           title: (value) => { actions.updateTask(task.id, { title: value, titleSource: 'manual' }) },
           progress: (value) => { actions.updateTask(task.id, { progress: value }) },
           blocked: (value) => { actions.updateTask(task.id, { blocked: value }) },
+          requireHuman: (value) => { actions.updateTask(task.id, { requireHuman: value }) },
           note: (value) => { actions.updateTask(task.id, { note: value }) },
           priority: (value) => { actions.updateTask(task.id, { priority: value }) },
           nextAction: (value) => { actions.updateTask(task.id, { nextAction: value }) },
@@ -3955,15 +3974,21 @@ window.__ModuleLoader__.load({
             ? null
             : h('div', { className: 'dsh-board__rules' },
               h('span', { className: 'dsh-board__sectionHint' }, t('rules.title')),
-              ...['requireEvidence', 'requireDeliverables', 'verifyDeliverables', 'requireSession'].map(key =>
+              ...[
+                ['requireEvidence', 'rules.requireEvidence'],
+                ['requireDeliverables', 'rules.requireDeliverables'],
+                ['verifyDeliverables', 'rules.verifyDeliverables'],
+                ['requireSession', 'rules.requireSession'],
+                ['blockOnDebt', 'project.ruleBlockOnDebt'],
+              ].map(([key, labelKey]) =>
                 h('label', { className: 'dsh-board__ruleLabel', key },
                   h('input', {
                     type: 'checkbox',
                     checked: project.acceptanceRules[key] === true,
-                    'aria-label': t('rules.' + key),
+                    'aria-label': t(labelKey),
                     onChange: (event) => { actions.setRule(key, event.target.checked) },
                   }),
-                  h('span', null, t('rules.' + key)))),
+                  h('span', null, t(labelKey)))),
               project.acceptanceRules.verifyDeliverables === true
                 ? h('div', { className: 'dsh-board__rootDirRow' },
                   h('input', {

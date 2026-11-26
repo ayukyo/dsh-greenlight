@@ -1919,6 +1919,217 @@ console.log('\n[46] a version-11 browser mirror migrates to the materials text')
     sentOps.filter(op => op.type === 'project.setMaterials').length === materialsOpsBeforePair + 2,
     JSON.stringify(sentOps.filter(op => op.type === 'project.setMaterials')))
 
+  console.log('\n[48] a card that says it needs my acceptance')
+  const requireHumanSeed = {
+    version: 12,
+    revision: 71,
+    updatedAt: new Date().toISOString(),
+    projects: [{
+      id: 'p-mine',
+      name: '要我验收的项目',
+      acceptanceMode: 'auto',
+      acceptanceRules: { requireEvidence: true, requireDeliverables: false, verifyDeliverables: true, requireSession: false },
+      rootDir: '',
+      materials: '',
+      memory: [],
+      trash: [],
+      tasks: [{
+        id: 't-mine',
+        title: '需要我拍板的卡',
+        status: 'review',
+        progress: 100,
+        evidence: '',
+        deliverables: [],
+        claims: [],
+        pendingVerification: [],
+        nextAction: '',
+        reviews: [],
+        events: [],
+        acceptance: null,
+        reviewReason: '',
+      }],
+    }],
+  }
+  await mount({ seedHost: requireHumanSeed })
+  await settle(400)
+
+  const humanSwitch = byAria('需要我验收')
+  check('the card renders the "needs my acceptance" switch', humanSwitch !== null, textOf().slice(0, 260))
+  check('the switch sits next to the blocked switch',
+    humanSwitch !== null && byAria('阻塞') !== null,
+    textOf().slice(0, 260))
+  check('it starts unchecked',
+    humanSwitch !== null && humanSwitch.props.checked === false,
+    humanSwitch && String(humanSwitch.props.checked))
+  check('no acceptance chip before it is switched on', !textOf().includes('待我验收'), textOf().slice(0, 260))
+
+  // Local first, like the blocked switch: the mirror and the card change before
+  // the Host hears anything, and the write itself is a normal task.patch.
+  const humanOpsBeforeOn = sentOps.length
+  toggle(humanSwitch, true)
+  check('the card immediately shows the acceptance chip', textOf().includes('待我验收'), textOf().slice(0, 260))
+  const humanChips = findAll(element => element.props && element.props.className === 'dsh-board__chip'
+    && childText(element) === '待我验收')
+  check('the chip reuses the existing chip style', humanChips.length === 1, String(humanChips.length))
+  check('the local mirror marks the card as needing me',
+    stored().projects[0].tasks[0].requireHuman === true,
+    String(stored().projects[0].tasks[0].requireHuman))
+  await settle(420)
+  await flush()
+  const humanOnOps = sentOps.slice(humanOpsBeforeOn).filter(op => op.type === 'task.patch' && op.taskId === 't-mine')
+  check('checking it writes through task.patch', humanOnOps.length === 1 && humanOnOps[0].patch.requireHuman === true, JSON.stringify(humanOnOps))
+  check('the patch names the project', humanOnOps.length === 1 && humanOnOps[0].projectId === 'p-mine', JSON.stringify(humanOnOps[0]))
+  check('the card needs no other operation',
+    JSON.stringify([...new Set(sentOps.slice(humanOpsBeforeOn).map(op => op.type))]) === JSON.stringify(['task.patch']),
+    JSON.stringify([...new Set(sentOps.slice(humanOpsBeforeOn).map(op => op.type))]))
+  check('the host stored the card as needing me',
+    hostState.board.projects[0].tasks[0].requireHuman === true,
+    String(hostState.board.projects[0].tasks[0].requireHuman))
+  check('the mirror keeps it after the round trip',
+    stored().projects[0].tasks[0].requireHuman === true,
+    String(stored().projects[0].tasks[0].requireHuman))
+  check('the switch stays on after the round trip',
+    byAria('需要我验收') !== null && byAria('需要我验收').props.checked === true,
+    byAria('需要我验收') && String(byAria('需要我验收').props.checked))
+  check('the chip survives the round trip', textOf().includes('待我验收'), textOf().slice(0, 260))
+
+  const humanOpsBeforeOff = sentOps.length
+  toggle(byAria('需要我验收'), false)
+  check('the chip goes away at once', !textOf().includes('待我验收'), textOf().slice(0, 260))
+  await settle(420)
+  await flush()
+  const humanOffOps = sentOps.slice(humanOpsBeforeOff).filter(op => op.type === 'task.patch' && op.taskId === 't-mine')
+  check('unchecking it sends requireHuman false', humanOffOps.length === 1 && humanOffOps[0].patch.requireHuman === false, JSON.stringify(humanOffOps))
+  check('the local mirror clears it',
+    stored().projects[0].tasks[0].requireHuman === false,
+    String(stored().projects[0].tasks[0].requireHuman))
+  check('the host clears it',
+    hostState.board.projects[0].tasks[0].requireHuman === false,
+    String(hostState.board.projects[0].tasks[0].requireHuman))
+  check('no acceptance chip remains', !textOf().includes('待我验收'), textOf().slice(0, 260))
+
+  console.log('\n[49] the project rule that sends unverified work to me')
+  // A document written before the rule existed must read as "off": the old
+  // four rules are kept and the new one is filled in as false.
+  const oldRulesDoc = JSON.stringify({
+    version: 10,
+    projects: [{
+      id: 'p-old-rules',
+      name: '旧规则项目',
+      acceptanceMode: 'auto',
+      acceptanceRules: { requireEvidence: true, requireDeliverables: false, verifyDeliverables: true, requireSession: false },
+      materials: '',
+      tasks: [],
+      memory: [],
+      trash: [],
+    }],
+  })
+  const oldRulesProject = testHelpers.parseProjects(oldRulesDoc)[0]
+  check('an old document without blockOnDebt parses it as off',
+    oldRulesProject.acceptanceRules.blockOnDebt === false,
+    JSON.stringify(oldRulesProject.acceptanceRules))
+  check('the old four rules survive the parse',
+    oldRulesProject.acceptanceRules.requireEvidence === true
+    && oldRulesProject.acceptanceRules.requireDeliverables === false
+    && oldRulesProject.acceptanceRules.verifyDeliverables === true
+    && oldRulesProject.acceptanceRules.requireSession === false,
+    JSON.stringify(oldRulesProject.acceptanceRules))
+
+  const debtRuleSeed = {
+    version: 10,
+    revision: 81,
+    updatedAt: new Date().toISOString(),
+    projects: [{
+      id: 'p-debt-rule',
+      name: '未验证转人工项目',
+      acceptanceMode: 'auto',
+      acceptanceRules: { requireEvidence: true, requireDeliverables: false, verifyDeliverables: true, requireSession: false },
+      rootDir: '',
+      materials: '',
+      memory: [],
+      trash: [],
+      tasks: [],
+    }],
+  }
+  await mount({ seedHost: debtRuleSeed })
+  await settle(400)
+
+  const debtSwitch = byAria('有未验证事项就转人工')
+  check('the project header renders the blockOnDebt rule', debtSwitch !== null, textOf().slice(0, 320))
+  check('the new rule sits with the existing rule switches',
+    byAria('需要完成说明') !== null
+    && byAria('需要交付物') !== null
+    && byAria('校验交付物文件') !== null
+    && byAria('需要绑定会话') !== null,
+    textOf().slice(0, 320))
+  check('an old project leaves the rule unchecked',
+    debtSwitch !== null && debtSwitch.props.checked === false,
+    debtSwitch && String(debtSwitch.props.checked))
+
+  // The rule rides the same save channel as the other four: one
+  // project.setAcceptance op carrying the changed rule.
+  const debtOpsBeforeOn = sentOps.length
+  toggle(debtSwitch, true)
+  check('the saved rules carry blockOnDebt at once',
+    stored().projects[0].acceptanceRules.blockOnDebt === true,
+    JSON.stringify(stored().projects[0].acceptanceRules))
+  await settle(420)
+  await flush()
+  const debtOnOps = sentOps.slice(debtOpsBeforeOn).filter(op => op.type === 'project.setAcceptance' && op.projectId === 'p-debt-rule')
+  check('turning it on saves through the existing acceptance channel',
+    debtOnOps.length === 1 && debtOnOps[0].rules !== undefined && debtOnOps[0].rules.blockOnDebt === true,
+    JSON.stringify(debtOnOps))
+  check('the rule needs no new operation',
+    JSON.stringify([...new Set(sentOps.slice(debtOpsBeforeOn).map(op => op.type))]) === JSON.stringify(['project.setAcceptance']),
+    JSON.stringify([...new Set(sentOps.slice(debtOpsBeforeOn).map(op => op.type))]))
+  check('the saved rules keep blockOnDebt on',
+    stored().projects[0].acceptanceRules.blockOnDebt === true,
+    JSON.stringify(stored().projects[0].acceptanceRules))
+  check('the host stored blockOnDebt',
+    hostState.board.projects[0].acceptanceRules.blockOnDebt === true,
+    JSON.stringify(hostState.board.projects[0].acceptanceRules))
+  check('the switch stays checked after the round trip',
+    byAria('有未验证事项就转人工') !== null && byAria('有未验证事项就转人工').props.checked === true,
+    byAria('有未验证事项就转人工') && String(byAria('有未验证事项就转人工').props.checked))
+
+  const debtOpsBeforeOff = sentOps.length
+  toggle(byAria('有未验证事项就转人工'), false)
+  await settle(420)
+  await flush()
+  const debtOffOps = sentOps.slice(debtOpsBeforeOff).filter(op => op.type === 'project.setAcceptance' && op.projectId === 'p-debt-rule')
+  check('turning it off saves blockOnDebt false',
+    debtOffOps.length === 1 && debtOffOps[0].rules !== undefined && debtOffOps[0].rules.blockOnDebt === false,
+    JSON.stringify(debtOffOps))
+  check('the saved rules clear blockOnDebt',
+    stored().projects[0].acceptanceRules.blockOnDebt === false,
+    JSON.stringify(stored().projects[0].acceptanceRules))
+  check('the host also cleared it',
+    hostState.board.projects[0].acceptanceRules.blockOnDebt === false,
+    JSON.stringify(hostState.board.projects[0].acceptanceRules))
+  check('the switch is unchecked after the round trip',
+    byAria('有未验证事项就转人工') !== null && byAria('有未验证事项就转人工').props.checked === false,
+    byAria('有未验证事项就转人工') && String(byAria('有未验证事项就转人工').props.checked))
+
+  console.log('\n[50] the two new switches are named in both locales')
+  check('the acceptance switch and its chip are localized',
+    dictionaries.greenlight.zh['task.requireHuman'] === '需要我验收'
+    && dictionaries.greenlight.en['task.requireHuman'] === 'Needs my acceptance'
+    && dictionaries.greenlight.zh['task.requireHumanChip'] === '待我验收'
+    && dictionaries.greenlight.en['task.requireHumanChip'] === 'Awaiting me',
+    JSON.stringify({
+      zhSwitch: dictionaries.greenlight.zh['task.requireHuman'],
+      enSwitch: dictionaries.greenlight.en['task.requireHuman'],
+      zhChip: dictionaries.greenlight.zh['task.requireHumanChip'],
+      enChip: dictionaries.greenlight.en['task.requireHumanChip'],
+    }))
+  check('the debt rule is localized',
+    dictionaries.greenlight.zh['project.ruleBlockOnDebt'] === '有未验证事项就转人工'
+    && dictionaries.greenlight.en['project.ruleBlockOnDebt'] === 'Send to me when anything is unverified',
+    JSON.stringify({
+      zh: dictionaries.greenlight.zh['project.ruleBlockOnDebt'],
+      en: dictionaries.greenlight.en['project.ruleBlockOnDebt'],
+    }))
+
   console.log('\n' + (failures === 0 ? 'ALL ' + checks + ' CHECKS PASSED' : failures + ' of ' + checks + ' CHECKS FAILED'))
   process.exit(failures === 0 ? 0 : 1)
 })().catch((error) => {

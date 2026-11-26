@@ -386,6 +386,7 @@ test('acceptance rules are configurable per project', () => {
   // Unknown rule names and non-boolean values are refused.
   assert.equal(applyOp(board, { type: 'project.setAcceptance', projectId: 'p1', rules: { nope: true } }), 'invalid_field')
   assert.equal(applyOp(board, { type: 'project.setAcceptance', projectId: 'p1', rules: { requireEvidence: 'yes' } }), 'invalid_field')
+  assert.equal(applyOp(board, { type: 'project.setAcceptance', projectId: 'p1', rules: { blockOnDebt: 'yes' } }), 'invalid_field')
   // The root directory is stored trimmed and bounded.
   assert.equal(applyOp(board, { type: 'project.setAcceptance', projectId: 'p1', rootDir: '  /repo  ' }), null)
   assert.equal(project.rootDir, '/repo')
@@ -411,6 +412,7 @@ test('a version-11 document migrates to v12 with an empty material text and auto
   const project = board.projects[0]
   assert.equal(project.plan, null, 'a version-11 document has no draft breakdown unless it wrote one')
   assert.equal(project.acceptanceMode, 'auto')
+  assert.equal(project.acceptanceRules.blockOnDebt, false, 'an older document leaves the new rule off')
   assert.equal(project.materials, '')
   assert.equal('references' in project, false, 'the typed list is not written back')
   const task = project.tasks[0]
@@ -830,6 +832,73 @@ test('next action and verification debt round-trip through a patch', () => {
   assert.deepEqual(task.pendingVerification, ['WSL 路径', '真机'])
   assert.deepEqual(verificationDebt(task), ['WSL 路径', '真机'])
   assert.equal(applyOp(board, { type: 'task.patch', projectId: 'p1', taskId: 't1', patch: { nextAction: 42 } }), 'invalid_field')
+})
+
+test('blockOnDebt decides whether verification debt blocks automatic acceptance', () => {
+  // Off by default: an open item is only a warning, so a verifiable completion
+  // still closes the card exactly as before.
+  const open = boardWithOneTask()
+  const openProject = open.projects[0]
+  const openTask = openProject.tasks[0]
+  openTask.progress = 100
+  openTask.evidence = '分析报告写完了'
+  openTask.nextAction = '等真机'
+  openTask.pendingVerification = ['要不要在这里修', '真机没跑']
+  assert.equal(openProject.acceptanceRules.blockOnDebt, false)
+  let verdict = evaluateAcceptance(openTask, openProject)
+  assert.equal(verdict.pass, true, 'the default rule keeps the card auto-acceptable')
+  assert.deepEqual(verdict.reasons, [])
+  assert.deepEqual(verdict.warnings, ['还有 2 项未验证或待决策：要不要在这里修、真机没跑'])
+  assert.equal(applyOp(open, { type: 'task.submit', projectId: 'p1', taskId: 't1', progress: 100 }), null)
+  assert.equal(openTask.status, 'done')
+  assert.equal(openTask.acceptedBy, 'auto')
+
+  // Turned on: the same sentence becomes a reason, so the card waits for a human.
+  const blocked = boardWithOneTask()
+  const blockedProject = blocked.projects[0]
+  const blockedTask = blockedProject.tasks[0]
+  assert.equal(applyOp(blocked, { type: 'project.setAcceptance', projectId: 'p1', rules: { blockOnDebt: true } }), null)
+  assert.equal(blockedProject.acceptanceRules.blockOnDebt, true)
+  assert.equal(applyOp(blocked, {
+    type: 'task.submit',
+    projectId: 'p1',
+    taskId: 't1',
+    progress: 100,
+    evidence: '分析报告写完了',
+    nextAction: '等用户决定要不要在这里修',
+    pendingVerification: ['要不要在这里修'],
+  }), null)
+  assert.equal(blockedTask.status, 'review')
+  assert.equal(blockedTask.acceptedBy, '')
+  assert.deepEqual(blockedTask.acceptance.reasons, ['还有 1 项未验证或待决策：要不要在这里修'])
+  assert.deepEqual(blockedTask.acceptance.warnings, [])
+  assert.match(blockedTask.reviewReason, /还有 1 项未验证或待决策：要不要在这里修/)
+
+  // With nothing open the rule changes nothing.
+  const clean = boardWithOneTask()
+  const cleanProject = clean.projects[0]
+  const cleanTask = cleanProject.tasks[0]
+  assert.equal(applyOp(clean, { type: 'project.setAcceptance', projectId: 'p1', rules: { blockOnDebt: true } }), null)
+  assert.equal(applyOp(clean, {
+    type: 'task.submit', projectId: 'p1', taskId: 't1', progress: 100, evidence: '全做完了',
+  }), null)
+  assert.equal(cleanTask.status, 'done')
+  assert.equal(cleanTask.acceptedBy, 'auto')
+})
+
+test('the debt reason counts every open item but names only the first three', () => {
+  const board = boardWithOneTask()
+  const project = board.projects[0]
+  const task = project.tasks[0]
+  task.progress = 100
+  task.evidence = '做完了'
+  task.nextAction = '等真机'
+  task.pendingVerification = ['一', '二', '三', '四', '五']
+  assert.equal(applyOp(board, { type: 'project.setAcceptance', projectId: 'p1', rules: { blockOnDebt: true } }), null)
+  const verdict = evaluateAcceptance(task, project)
+  assert.equal(verdict.pass, false)
+  assert.deepEqual(verdict.reasons, ['还有 5 项未验证或待决策：一、二、三'])
+  assert.deepEqual(verdict.warnings, [])
 })
 
 test('a gate also guards a status written through a patch', () => {

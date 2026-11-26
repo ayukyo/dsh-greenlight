@@ -138,10 +138,11 @@ greenlight_task_submit {
 | `verifyDeliverables` | 开 | 声明的交付物必须真实存在（关掉则只当元数据） |
 | `requireSession` | 关 | 必须绑定主会话 |
 | `requireVerifiedClaim` | 关 | 至少一条带"怎么验证的"的通过项 |
+| `blockOnDebt` | 关 | 有未验证/待决策事项就转人工（agent 用 `pendingVerification` 声明） |
 | `requiredLayers` | 空 | 必须覆盖的验证层级 |
 | `rootDir` | 空 | 相对交付物的解析根目录 |
 
-自动通过的完整条件：非人工模式、非"需人工"卡片、进度 100%、未阻塞、未失败，且以上规则全部满足。
+自动通过的完整条件：非人工模式、非"需人工"卡片（卡片上的「需要我验收」）、进度 100%、未阻塞、未失败，且以上规则全部满足。
 任一不满足 → 转人工，并在卡片上写明**具体原因**（例如"交付物不存在或为空：docs/report.md"）。
 
 ## 数据与存储

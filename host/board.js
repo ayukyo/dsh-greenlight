@@ -49,6 +49,8 @@ export const DEFAULT_ACCEPTANCE_RULES = {
   requireSession: false,
   /** A completion must carry at least one verified claim. */
   requireVerifiedClaim: false,
+  /** Open items (unverified claims, undecided questions) must be decided by a human. */
+  blockOnDebt: false,
 }
 
 /**
@@ -1105,7 +1107,15 @@ export function evaluateAcceptance(task, project) {
     }
   }
   const debt = verificationDebt(task)
-  if (debt.length > 0) warnings.push('还有 ' + debt.length + ' 项未验证')
+  if (debt.length > 0) {
+    // The debt is one sentence: a warning by default, because a small open item
+    // should stay visible without dumping every card on a human. A project that
+    // turned on blockOnDebt promotes the same sentence to a blocker, so "we have
+    // not decided that yet" cannot be accepted as finished.
+    const note = '还有 ' + debt.length + ' 项未验证或待决策：' + debt.slice(0, 3).join('、')
+    if (rules.blockOnDebt === true) reasons.push(note)
+    else warnings.push(note)
+  }
   return { pass: reasons.length === 0, reasons, warnings }
 }
 

@@ -197,13 +197,14 @@ async function runOp(store, op, archiver) {
 function describeTask(store, projectId, taskId) {
   const project = findProject(store.snapshot(), projectId)
   const task = project === undefined ? undefined : findTask(project, taskId)
-  if (task === undefined) return { taskId, status: '', progress: 0, acceptedBy: '', reason: '' }
+  if (task === undefined) return { taskId, status: '', progress: 0, acceptedBy: '', requireHuman: false, reason: '' }
   const refused = task.acceptance !== null && task.acceptance.pass !== true
   return {
     taskId,
     status: task.status,
     progress: task.progress,
     acceptedBy: task.acceptedBy,
+    requireHuman: task.requireHuman === true,
     reason: refused ? task.acceptance.reasons.join('；') : '',
   }
 }
@@ -439,6 +440,10 @@ export function createBoardTools(store, options) {
           status: { type: 'string', enum: ['backlog', 'todo', 'running', 'review', 'done', 'failed'] },
           progress: { type: 'number', description: '0–100' },
           blocked: { type: 'boolean' },
+          requireHuman: {
+            type: 'boolean',
+            description: 'Ask for a human to accept this card even when the completion is verifiable',
+          },
           title: { type: 'string' },
           note: { type: 'string' },
           evidence: {
@@ -467,6 +472,7 @@ export function createBoardTools(store, options) {
             status: { type: 'string' },
             progress: { type: 'number' },
             acceptedBy: { type: 'string' },
+            requireHuman: { type: 'boolean' },
             reason: { type: 'string' },
           },
         },
@@ -482,6 +488,7 @@ export function createBoardTools(store, options) {
         const status = optionalString(args, 'status')
         const progress = optionalNumber(args, 'progress')
         const blocked = optionalBoolean(args, 'blocked')
+        const requireHuman = optionalBoolean(args, 'requireHuman')
         const title = optionalString(args, 'title')
         const note = optionalString(args, 'note')
         const reviewReason = optionalString(args, 'reviewReason')
@@ -491,6 +498,7 @@ export function createBoardTools(store, options) {
         if (status !== undefined) patch.status = status
         if (progress !== undefined) patch.progress = progress
         if (blocked !== undefined) patch.blocked = blocked
+        if (requireHuman !== undefined) patch.requireHuman = requireHuman
         if (title !== undefined) patch.title = title
         if (note !== undefined) patch.note = note
         if (reviewReason !== undefined) patch.reviewReason = reviewReason
@@ -511,7 +519,7 @@ export function createBoardTools(store, options) {
     },
     {
       name: 'greenlight_task_submit',
-      description: 'Report a subtask as finished and let the Host verify it. Include what you did (evidence) and the files you produced (deliverables). The card lands in done when the completion is verifiable, otherwise it goes to review with the reason so a human decides.',
+      description: 'Report a subtask as finished and let the Host verify it. Include what you did (evidence) and the files you produced (deliverables). The card lands in done when the completion is verifiable, otherwise it goes to review with the reason so a human decides. 如果还有没定的事（例如"要不要在这里修"）、或者某项还没验证，请写进 `pendingVerification`，不要用一句完成说明把它们盖过去——项目开启 blockOnDebt 时这些会拦住自动验收。',
       parameters: {
         type: 'object',
         required: ['projectId', 'taskId'],
@@ -557,6 +565,7 @@ export function createBoardTools(store, options) {
             status: { type: 'string' },
             progress: { type: 'number' },
             acceptedBy: { type: 'string' },
+            requireHuman: { type: 'boolean' },
             reason: { type: 'string' },
           },
         },
@@ -796,6 +805,10 @@ export function createBoardTools(store, options) {
           verifyDeliverables: { type: 'boolean', description: 'Declared deliverables must exist as non-empty files' },
           requireSession: { type: 'boolean', description: 'A completion must belong to a Session' },
           requireVerifiedClaim: { type: 'boolean', description: 'A completion must carry at least one verified claim' },
+          blockOnDebt: {
+            type: 'boolean',
+            description: 'A completion that still has unverified items or open decisions must be decided by a human',
+          },
           requiredLayers: {
             type: 'array',
             items: { type: 'string', enum: ['static', 'unit', 'build', 'host', 'physical'] },
@@ -820,6 +833,7 @@ export function createBoardTools(store, options) {
             requireDeliverables: { type: 'boolean' },
             verifyDeliverables: { type: 'boolean' },
             requireSession: { type: 'boolean' },
+            blockOnDebt: { type: 'boolean' },
             rootDir: { type: 'string' },
           },
         },
@@ -830,6 +844,7 @@ export function createBoardTools(store, options) {
             + '\n需要交付物：' + (value.requireDeliverables ? '是' : '否')
             + '\n校验交付物文件：' + (value.verifyDeliverables ? '是' : '否')
             + '\n需要绑定会话：' + (value.requireSession ? '是' : '否')
+            + '\n有未验证事项就转人工：' + (value.blockOnDebt ? '是' : '否')
             + '\n项目根目录：' + (value.rootDir === '' ? '（未设置）' : value.rootDir),
         }],
       },
@@ -842,6 +857,10 @@ export function createBoardTools(store, options) {
           const value = optionalBoolean(args, key)
           if (value !== undefined) rules[key] = value
         }
+        // blockOnDebt is decided by the data layer, so a non-boolean value is
+        // refused as invalid_field exactly like any other rules write.
+        const blockOnDebt = args === null || args === undefined ? undefined : args.blockOnDebt
+        if (blockOnDebt !== undefined && blockOnDebt !== null) rules.blockOnDebt = blockOnDebt
         const hasRules = Object.keys(rules).length > 0
         const requiredLayers = optionalStringArray(args, 'requiredLayers')
         const gateReviewEvidence = optionalBoolean(args, 'gateReviewEvidence')
@@ -872,6 +891,7 @@ export function createBoardTools(store, options) {
           verifyDeliverables: project.acceptanceRules.verifyDeliverables,
           requireSession: project.acceptanceRules.requireSession,
           requireVerifiedClaim: project.acceptanceRules.requireVerifiedClaim,
+          blockOnDebt: project.acceptanceRules.blockOnDebt === true,
           requiredLayers: project.requiredLayers,
           rootDir: project.rootDir,
         }
