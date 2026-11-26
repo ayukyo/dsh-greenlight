@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import { emptyBoard, applyOp, applyOps } from '../board.js'
-import { attachVerification, prepareBatch, probeDeliverables } from '../verify.js'
+import { attachVerification, prepareBatch, probeDeliverables, probeProject } from '../verify.js'
 
 /**
  * @returns a temp directory holding one real file.
@@ -150,21 +150,33 @@ test('a verified deliverable completes the card end to end', async () => {
   assert.equal(task.status, 'review')
   assert.match(task.reviewReason, /交付物不存在或为空/)
 })
-test('prepareBatch lets a recheck see references added in the same batch', async () => {
+test('probeProject reports the deliverables of the cards that declare one', async () => {
+  const dir = await makeRoot()
   const board = emptyBoard()
   applyOp(board, { type: 'project.add', id: 'p1', name: 'P' })
+  applyOp(board, { type: 'project.setAcceptance', projectId: 'p1', rootDir: dir })
+  applyOp(board, { type: 'task.add', projectId: 'p1', id: 't1', title: '带交付物', deliverables: ['docs/report.md'] })
+  applyOp(board, { type: 'task.add', projectId: 'p1', id: 't2', title: '没交付物' })
+
+  const sweep = await probeProject(board.projects[0])
+  assert.deepEqual(Object.keys(sweep), ['deliverables'], 'a sweep reports deliverables and nothing else')
+  assert.deepEqual(sweep.deliverables.t1, { checked: true, missing: [], unresolved: [] })
+  assert.equal('t2' in sweep.deliverables, false, 'a card that declares nothing is not probed')
+})
+
+test('prepareBatch sweeps the deliverables a recheck reports', async () => {
+  const board = emptyBoard()
+  applyOp(board, { type: 'project.add', id: 'p1', name: 'P' })
+  applyOp(board, { type: 'project.setAcceptance', projectId: 'p1', rootDir: '/repo' })
+  applyOp(board, { type: 'task.add', projectId: 'p1', id: 't1', title: 'T', deliverables: ['docs/nope.md'] })
   const prepared = await prepareBatch(board, [
-    { type: 'reference.add', projectId: 'p1', id: 's1', kind: 'link', name: '缺失', value: 'docs/nope.md' },
-    { type: 'reference.add', projectId: 'p1', id: 's2', kind: 'note', name: '约定', value: 'docs/nope.md' },
     { type: 'project.recheck', projectId: 'p1' },
   ], { stat: async () => null })
-  assert.deepEqual(prepared[2].staleEntries, ['s1'], 'the sweep must see the link the batch just added, and only links')
+  assert.deepEqual(prepared[0].deliverables, { t1: { checked: true, missing: ['docs/nope.md'], unresolved: [] } })
+  assert.equal('staleEntries' in prepared[0], false, 'a sweep no longer reports stale references')
   assert.equal(applyOp(board, prepared[0]), null)
-  assert.equal(applyOp(board, prepared[1]), null)
-  assert.equal(applyOp(board, prepared[2]), null)
-  const references = board.projects[0].references
-  assert.equal(references.find(entry => entry.id === 's1').staleSince > 0, true)
-  assert.equal(references.find(entry => entry.id === 's2').staleSince, 0, 'a note is never probed')
+  assert.deepEqual(board.projects[0].tasks[0].verification.missing, ['docs/nope.md'])
+  assert.equal(board.projects[0].lastCheckAt > 0, true)
 })
 
 test('a completion in the same batch sees deliverables declared earlier in that batch', async () => {
@@ -183,7 +195,7 @@ test('a completion in the same batch sees deliverables declared earlier in that 
   assert.equal(prepared[1].verification.checked, true)
 })
 
-test('a sweep in the same batch marks the reference that is actually missing', async () => {
+test('a recheck in the same batch sees the card the batch just declared', async () => {
   const board = emptyBoard()
   applyOp(board, { type: 'project.add', id: 'p1', name: 'P' })
   const root = await mkdtemp(join(tmpdir(), 'greenlight-sweep-'))
@@ -200,15 +212,15 @@ test('a sweep in the same batch marks the reference that is actually missing', a
   }
   const applied = applyOps(board, await prepareBatch(board, [
     { type: 'project.setAcceptance', projectId: 'p1', rootDir: root },
-    { type: 'reference.add', projectId: 'p1', kind: 'link', name: 'there', value: 'docs/there.md' },
-    { type: 'reference.add', projectId: 'p1', kind: 'link', name: 'gone', value: 'docs/gone.md' },
+    { type: 'task.add', projectId: 'p1', id: 't-there', title: '还在的', deliverables: ['docs/there.md'] },
+    { type: 'task.add', projectId: 'p1', id: 't-gone', title: '丢了的', deliverables: ['docs/gone.md'] },
     { type: 'project.recheck', projectId: 'p1' },
   ], { stat: probe }))
   assert.deepEqual(applied.rejected, [])
-  const references = applied.board.projects[0].references
-  const there = references.find(entry => entry.name === 'there')
-  const gone = references.find(entry => entry.name === 'gone')
-  assert.ok(there && gone, 'both references must exist after the batch')
-  assert.equal(there.staleSince, 0, 'the file that exists must not be flagged')
-  assert.ok(gone.staleSince > 0, 'the file that is missing must be flagged in the same batch')
+  const tasks = applied.board.projects[0].tasks
+  const there = tasks.find(task => task.id === 't-there')
+  const gone = tasks.find(task => task.id === 't-gone')
+  assert.ok(there && gone, 'both cards must exist after the batch')
+  assert.deepEqual(there.verification.missing, [], 'the file that exists must not be flagged')
+  assert.deepEqual(gone.verification.missing, ['docs/gone.md'], 'the file that is missing must be flagged in the same batch')
 })

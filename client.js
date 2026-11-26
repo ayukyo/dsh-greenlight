@@ -39,7 +39,7 @@ window.__ModuleLoader__.load({
     /** Local storage key of the board document (kept across versions so it migrates in place). */
     const STORAGE_KEY = 'dsh.greenlight.v1'
     /** Document version written back to storage; it mirrors the Host document shape. */
-    const DOC_VERSION = 11
+    const DOC_VERSION = 12
     /** Subtask priorities, low to high. */
     const PRIORITIES = ['low', 'normal', 'high', 'urgent']
     /** How long a removed card stays restorable (mirrors the Host rule). */
@@ -63,9 +63,11 @@ window.__ModuleLoader__.load({
     /** Header the Host requires on writes; a cross-origin page cannot set it silently. */
     const HOST_GUARD_HEADER = 'x-greenlight'
     /** Operations merged into one pending write instead of queueing behind it. */
-    const COALESCED_OPS = ['task.patch', 'project.rename', 'reference.update']
+    const COALESCED_OPS = ['task.patch', 'project.rename', 'project.setMaterials']
     /** Wait before a queued batch is sent, so a typing burst costs one request. */
     const FLUSH_DELAY_MS = 140
+    /** Wait after the last materials keystroke before the text is written to the Host. */
+    const MATERIALS_DEBOUNCE_MS = 600
     /** Retry delays after a transport failure, in milliseconds. */
     const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 15000]
     /** How often this surface checks the Host document without a live stream. */
@@ -90,6 +92,8 @@ window.__ModuleLoader__.load({
     const MAX_PLAN_TITLE = 200
     /** How much of an item note the draft card shows before cutting it. */
     const PLAN_NOTE_PREVIEW = 80
+    /** Longest materials text a project holds; the Host truncates at the same length. */
+    const MAX_MATERIALS_LENGTH = 20000
 
     const zh = {
       'panel.label': '绿灯看板',
@@ -120,28 +124,12 @@ window.__ModuleLoader__.load({
       'detail.progress': '完成度',
       'detail.deleteProject': '删除项目',
       'detail.deleteProjectConfirm': '删除项目「%s」？\n\n该项目下的子任务和项目记忆都会一起删除。',
-      'references.section': '项目资料',
-      'references.hint': '链接会被复查、可被卡片引用；约定只作为项目说明文本',
-      'references.kind': '类型',
-      'references.kindNote': '约定',
-      'references.kindLink': '链接',
-      'references.kindOther': '其它',
-      'references.name': '名称',
-      'references.linkValue': '路径或链接',
-      'references.noteValue': '约定内容',
-      'references.description': '说明（可选）',
-      'references.add': '添加资料',
-      'references.empty': '还没有项目资料',
-      'references.delete': '删除资料',
-      'references.edit': '编辑资料',
-      'references.save': '保存',
-      'references.cancel': '取消',
-      'references.intakePlaceholder': '粘贴本地路径或链接，一行一个',
-      'references.intake': '扫描材料',
-      'references.intakeHint': '已添加 %s 条资料（跳过 %s 条重复，%s 条未找到）',
+      'materials.section': '项目资料',
+      'materials.placeholder': '例：docs/需求.md、接口文档链接、先评审再实现',
+      'materials.saved': '已保存',
+      'materials.typing': '输入中…',
       'plan.section': '拆解草案',
       'plan.countUnit': '项',
-      'plan.refCount': '引用 %s',
       'plan.apply': '全部落卡',
       'plan.discard': '丢弃草案',
       'plan.edit': '编辑草案',
@@ -223,12 +211,11 @@ window.__ModuleLoader__.load({
       'task.layer.host': '本机',
       'task.layer.physical': '真机',
       'task.events': '轨迹',
-      'task.staleRef': '已失效',
       'anchor.title': '决策锚点',
       'anchor.digest': '需求摘要',
       'anchor.decisions': '关键决策',
       'anchor.risks': '未解决风险',
-      'board.recheck': '复查引用',
+      'board.recheck': '复查交付物',
       'task.rejectReview': '打回',
       'task.rejectReason': '打回原因（必填）',
       'task.rejectSubmit': '确认打回',
@@ -253,8 +240,6 @@ window.__ModuleLoader__.load({
       'confirm.deleteTask': '删除子任务「%s」？',
       'confirm.deleteTaskBody': '删除后会进入回收站，可以恢复。',
       'confirm.deleteMemory': '删除这条项目记忆？',
-      'confirm.deleteRef': '删除引用资料「%s」？',
-      'confirm.deleteRefBody': '引用该资料的子任务会同时解除关联。',
       'confirm.purgeTrash': '清空回收站？',
       'confirm.purgeTrashBody': '回收站里的子任务会被永久删除，无法恢复。',
       'confirm.import': '导入会覆盖当前看板？',
@@ -288,7 +273,6 @@ window.__ModuleLoader__.load({
       'filter.none': '没有符合条件的任务',
       'task.tags': '标签',
       'task.tagsPlaceholder': '用逗号分隔',
-      'task.refs': '引用资料',
       'trash.section': '回收站',
       'trash.hint': '删除的卡片保留 7 天，可恢复',
       'trash.empty': '回收站是空的',
@@ -327,7 +311,7 @@ window.__ModuleLoader__.load({
     const en = {
       'panel.label': 'Greenlight Board',
       'page.title': 'Greenlight Board',
-      'page.subtitle': 'Work splits into projects and subtasks, each subtask can own a main Session. What can be checked closes itself on a green light; what cannot asks a human. Projects share references and memory.',
+      'page.subtitle': 'Work splits into projects and subtasks, each subtask can own a main Session. What can be checked closes itself on a green light; what cannot asks a human. Projects share materials and memory.',
       'page.back': 'Back to conversation',
       'sync.connecting': 'Connecting…',
       'sync.synced': 'Synced',
@@ -353,28 +337,12 @@ window.__ModuleLoader__.load({
       'detail.progress': 'Completion',
       'detail.deleteProject': 'Delete project',
       'detail.deleteProjectConfirm': 'Delete the project "%s"?\n\nIts subtasks and project memory are deleted with it.',
-      'references.section': 'Project references',
-      'references.hint': 'Links are rechecked and cards can point at them; notes stay as project conventions',
-      'references.kind': 'Type',
-      'references.kindNote': 'Convention',
-      'references.kindLink': 'Link',
-      'references.kindOther': 'Other',
-      'references.name': 'Name',
-      'references.linkValue': 'Path or link',
-      'references.noteValue': 'Convention text',
-      'references.description': 'Description (optional)',
-      'references.add': 'Add reference',
-      'references.empty': 'No project references yet',
-      'references.delete': 'Delete reference',
-      'references.edit': 'Edit reference',
-      'references.save': 'Save',
-      'references.cancel': 'Cancel',
-      'references.intakePlaceholder': 'Paste local paths or links, one per line',
-      'references.intake': 'Scan materials',
-      'references.intakeHint': 'Added %s reference(s) (skipped %s duplicates, %s not found)',
+      'materials.section': 'Project materials',
+      'materials.placeholder': 'e.g. docs/spec.md, an API doc link, review before implementing',
+      'materials.saved': 'Saved',
+      'materials.typing': 'Typing…',
       'plan.section': 'Draft plan',
       'plan.countUnit': 'items',
-      'plan.refCount': '%s refs',
       'plan.apply': 'Create all cards',
       'plan.discard': 'Discard draft',
       'plan.edit': 'Edit draft',
@@ -456,12 +424,11 @@ window.__ModuleLoader__.load({
       'task.layer.host': 'host',
       'task.layer.physical': 'device',
       'task.events': 'History',
-      'task.staleRef': 'stale',
       'anchor.title': 'Decision anchor',
       'anchor.digest': 'Requirement',
       'anchor.decisions': 'Key decisions',
       'anchor.risks': 'Open risks',
-      'board.recheck': 'Recheck references',
+      'board.recheck': 'Recheck deliverables',
       'task.rejectReview': 'Reject',
       'task.rejectReason': 'Reason for rejection (required)',
       'task.rejectSubmit': 'Reject',
@@ -480,14 +447,12 @@ window.__ModuleLoader__.load({
       'confirm.archive': 'Archive',
       'confirm.purge': 'Empty',
       'confirm.deleteProject': 'Delete the project "%s"?',
-      'confirm.deleteProjectBody': 'Its subtasks, project memory and references are deleted with it. This cannot be undone.',
+      'confirm.deleteProjectBody': 'Its subtasks, project memory and materials are deleted with it. This cannot be undone.',
       'confirm.projectTasks': 'Subtasks: %s',
       'confirm.projectMemory': 'Memory entries: %s',
       'confirm.deleteTask': 'Delete the subtask "%s"?',
       'confirm.deleteTaskBody': 'It moves to the trash and can be restored.',
       'confirm.deleteMemory': 'Delete this project memory entry?',
-      'confirm.deleteRef': 'Delete the reference "%s"?',
-      'confirm.deleteRefBody': 'Subtasks using it lose the link.',
       'confirm.purgeTrash': 'Empty the trash?',
       'confirm.purgeTrashBody': 'Trashed subtasks are deleted permanently and cannot be restored.',
       'confirm.import': 'Importing replaces the whole board?',
@@ -521,7 +486,6 @@ window.__ModuleLoader__.load({
       'filter.none': 'No subtask matches',
       'task.tags': 'Tags',
       'task.tagsPlaceholder': 'comma separated',
-      'task.refs': 'References',
       'trash.section': 'Trash',
       'trash.hint': 'Removed cards stay restorable for 7 days',
       'trash.empty': 'Trash is empty',
@@ -965,6 +929,14 @@ window.__ModuleLoader__.load({
 }
 .dsh-board__shared::placeholder {
   color: var(--dsw-alias-label-tertiary);
+}
+/* The materials line reports the local save state; it never leaves this page. */
+.dsh-board__materialsState {
+  margin-left: auto;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
 }
 .dsh-board__tasks {
   display: flex;
@@ -1923,12 +1895,6 @@ window.__ModuleLoader__.load({
   margin: 4px 0 0;
   padding-left: 16px;
 }
-.dsh-board__stale {
-  margin: 0;
-  font-size: 11px;
-  line-height: 16px;
-  color: var(--dsw-alias-state-warn-primary);
-}
 .dsh-board__toast {
   position: sticky;
   bottom: 12px;
@@ -1982,23 +1948,7 @@ window.__ModuleLoader__.load({
   height: 30px;
   font-size: 12px;
 }
-.dsh-board__refRow {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
 .dsh-board__ghost[data-active='true'] {
-  border-color: var(--dsw-alias-state-business-primary);
-  color: var(--dsw-alias-state-business-primary);
-}
-.dsh-board__chip--toggle {
-  border: 0.5px solid transparent;
-  cursor: pointer;
-  font: inherit;
-}
-.dsh-board__chip--toggle[data-active='true'] {
   border-color: var(--dsw-alias-state-business-primary);
   color: var(--dsw-alias-state-business-primary);
 }
@@ -2096,7 +2046,7 @@ window.__ModuleLoader__.load({
      */
     function opKey(op) {
       if (op === null || typeof op !== 'object') return ''
-      const parts = [op.type, op.projectId, op.taskId, op.memoryId, op.referenceId]
+      const parts = [op.type, op.projectId, op.taskId, op.memoryId]
       return parts.map(part => (typeof part === 'string' ? part : '')).join('|')
     }
 
@@ -2149,7 +2099,6 @@ window.__ModuleLoader__.load({
         priority: PRIORITIES.includes(item.priority) ? item.priority : 'normal',
         dueDate: typeof item.dueDate === 'string' ? item.dueDate : '',
         tags: asStringList(item.tags),
-        refs: asStringList(item.refs),
         blocked: item.blocked === true,
         reviewReason: typeof item.reviewReason === 'string' ? item.reviewReason : '',
         evidence: typeof item.evidence === 'string' ? item.evidence : '',
@@ -2214,27 +2163,68 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Parse one stored project reference: a `link` is a path or URL the Host
-     * rechecks and cards may point at; a `note` is convention text that is
-     * never probed, so it can never be marked stale.
-     * @param item - candidate from the stored document.
-     * @returns a normalized reference, or null when the entry is unusable.
+     * Render one line of the materials text from a structured entry of an older
+     * document: `- 名称：value`, with the description appended in parentheses
+     * when there is one. A blank value keeps only the name.
+     * @param name - the entry name, already trimmed and known to be non-empty.
+     * @param value - the entry value.
+     * @param description - the optional description.
+     * @returns one line of the materials text.
      */
-    function normalizeReference(item) {
-      if (item === null || typeof item !== 'object') return null
-      const name = typeof item.name === 'string' ? item.name.trim() : ''
-      if (name === '') return null
-      const kind = item.kind === 'note' ? 'note' : (item.kind === 'other' ? 'other' : 'link')
-      return {
-        id: typeof item.id === 'string' && item.id !== '' ? item.id : createId('ref-'),
-        kind,
-        name,
-        value: typeof item.value === 'string' ? item.value : '',
-        description: typeof item.description === 'string' ? item.description : '',
-        staleSince: kind === 'link' && typeof item.staleSince === 'number' && isFinite(item.staleSince) && item.staleSince > 0
-          ? item.staleSince
-          : 0,
+    function materialsLine(name, value, description) {
+      let line = '- ' + name
+      if (typeof value === 'string' && value !== '') line += '：' + value
+      if (typeof description === 'string' && description.trim() !== '') line += '（' + description.trim() + '）'
+      return line
+    }
+
+    /**
+     * Read a project's materials text, folding the structured fields of an
+     * older document into it.
+     *
+     * Version 11 and earlier kept a `references` list; a version-9 document also
+     * kept a free-text `shared` block and a `sharedEntries` list that were folded
+     * into that list. Version 12 has one multi-line text, so every old entry
+     * becomes one line, in the order the old arrays held it. A document that
+     * already carries a non-empty text keeps it as-is, which makes the migration
+     * idempotent when a migrated document is read back.
+     * @param item - raw stored project.
+     * @returns the materials text, bounded by MAX_MATERIALS_LENGTH.
+     */
+    function migrateMaterials(item) {
+      const existing = typeof item.materials === 'string' ? item.materials : ''
+      if (existing.trim() !== '') return existing.slice(0, MAX_MATERIALS_LENGTH)
+      const lines = []
+      // The version-9 free text became a note named 项目说明, kept first: that is
+      // where the project read it. A note carries no description parens.
+      const sharedText = typeof item.shared === 'string' ? item.shared : ''
+      if (sharedText.trim() !== '') lines.push(materialsLine('项目说明', sharedText, ''))
+      const source = Array.isArray(item.references) ? item.references : []
+      for (let index = 0; index < source.length; index += 1) {
+        const entry = source[index]
+        if (entry === null || typeof entry !== 'object') continue
+        const name = typeof entry.name === 'string' ? entry.name.trim() : ''
+        if (name === '') continue
+        // A note is convention text, never a probe target: it is rendered like
+        // any other line but keeps no description parens.
+        const note = entry.kind === 'note'
+        lines.push(materialsLine(name,
+          typeof entry.value === 'string' ? entry.value : '',
+          note ? '' : (typeof entry.description === 'string' ? entry.description : '')))
       }
+      // A version-9 shared entry carried a path where a link carries its value.
+      const legacySource = Array.isArray(item.sharedEntries) ? item.sharedEntries : []
+      for (let index = 0; index < legacySource.length; index += 1) {
+        const entry = legacySource[index]
+        if (entry === null || typeof entry !== 'object') continue
+        const name = typeof entry.name === 'string' ? entry.name.trim() : ''
+        if (name === '') continue
+        lines.push(materialsLine(name,
+          typeof entry.path === 'string' ? entry.path : '',
+          typeof entry.description === 'string' ? entry.description : ''))
+      }
+      const text = lines.join('\n')
+      return text.length > MAX_MATERIALS_LENGTH ? text.slice(0, MAX_MATERIALS_LENGTH) : text
     }
 
     /**
@@ -2261,7 +2251,6 @@ window.__ModuleLoader__.load({
           note: typeof entry.note === 'string' ? entry.note : '',
           priority: PRIORITIES.includes(entry.priority) ? entry.priority : 'normal',
           tags: asStringList(entry.tags),
-          refs: asStringList(entry.refs),
           deliverables: Array.isArray(entry.deliverables) ? entry.deliverables.filter(value => typeof value === 'string') : [],
         })
       }
@@ -2332,61 +2321,10 @@ window.__ModuleLoader__.load({
       for (let index = 0; index < memory.length; index += 1) {
         if (memory[index].taskId !== '' && known[memory[index].taskId] !== true) memory[index].taskId = ''
       }
-      // Version 9 kept project material in two fields — a free-text `shared`
-      // block and a `sharedEntries` list — and version 10 folds both into one
-      // typed list. A stored v9 document is migrated here, in memory, and the
-      // legacy fields are dropped so what gets written back is already v10.
-      const references = []
-      const referenceSource = Array.isArray(item.references) ? item.references : []
-      for (let index = 0; index < referenceSource.length; index += 1) {
-        const reference = normalizeReference(referenceSource[index])
-        if (reference !== null) references.push(reference)
-      }
-      const sharedText = typeof item.shared === 'string' ? item.shared : ''
-      if (sharedText.trim() !== '') {
-        // The old free text becomes a note, kept first: that is where it was read.
-        references.unshift({
-          id: createId('ref-'),
-          kind: 'note',
-          name: '项目说明',
-          value: sharedText,
-          description: '',
-          staleSince: 0,
-        })
-      }
-      const legacyEntrySource = Array.isArray(item.sharedEntries) ? item.sharedEntries : []
-      for (let index = 0; index < legacyEntrySource.length; index += 1) {
-        const entry = legacyEntrySource[index]
-        if (entry === null || typeof entry !== 'object') continue
-        const reference = normalizeReference({
-          id: entry.id,
-          kind: 'link',
-          name: entry.name,
-          value: entry.path,
-          description: entry.description,
-          staleSince: entry.staleSince,
-        })
-        if (reference !== null) references.push(reference)
-      }
-      // A hand-edited document may repeat an id; the first one keeps it so the
-      // cards that already point at it stay valid.
-      const knownReferences = {}
-      for (let index = 0; index < references.length; index += 1) {
-        while (knownReferences[references[index].id] === true) references[index].id = createId('ref-')
-        knownReferences[references[index].id] = true
-      }
-      for (let index = 0; index < tasks.length; index += 1) {
-        tasks[index].refs = tasks[index].refs.filter(ref => knownReferences[ref] === true)
-      }
-      // A draft plan (version 11) points at references too: an item may only
-      // cite entries that exist, so a dangling id is dropped exactly as it is
-      // for a subtask.
+      // Version 12 folds the structured materials of older documents into one
+      // multi-line text, in memory, so what gets written back is already v12 and
+      // no reference list, card reference or draft reference survives.
       const plan = normalizePlan(item.plan)
-      if (plan !== null) {
-        for (let index = 0; index < plan.items.length; index += 1) {
-          plan.items[index].refs = plan.items[index].refs.filter(ref => knownReferences[ref] === true)
-        }
-      }
       return {
         id: typeof item.id === 'string' && item.id !== '' ? item.id : createId('p'),
         name: item.name,
@@ -2396,8 +2334,8 @@ window.__ModuleLoader__.load({
         anchor: item.anchor !== null && typeof item.anchor === 'object' ? item.anchor : { digest: '', decisions: [], risks: [], deviations: [] },
         lastCheckAt: typeof item.lastCheckAt === 'number' ? item.lastCheckAt : 0,
         rootDir: typeof item.rootDir === 'string' ? item.rootDir : '',
+        materials: migrateMaterials(item),
         plan,
-        references,
         tasks,
         memory,
         trash,
@@ -2431,7 +2369,6 @@ window.__ModuleLoader__.load({
           priority: 'normal',
           dueDate: '',
           tags: [],
-          refs: [],
           blocked: false,
           requireHuman: false,
           evidence: '',
@@ -2455,7 +2392,7 @@ window.__ModuleLoader__.load({
           name: '默认项目',
           acceptanceMode: 'auto',
           plan: null,
-          references: [],
+          materials: '',
           tasks,
           memory: [],
           trash: [],
@@ -2519,10 +2456,6 @@ window.__ModuleLoader__.load({
       const [status, setStatus] = React.useState('connecting')
       const [recovered, setRecovered] = React.useState(false)
       const [stuck, setStuck] = React.useState(0)
-      // Per-operation outcomes the Host may return with a write. The board
-      // renders from the document alone; only surfaces that need a count (the
-      // material scan) read this, and they degrade when it is absent.
-      const [results, setResults] = React.useState(null)
       const revisionRef = React.useRef(-1)
       const queueRef = React.useRef([])
       const timerRef = React.useRef(null)
@@ -2582,9 +2515,6 @@ window.__ModuleLoader__.load({
         }
         busyRef.current = true
         queueRef.current = []
-        // A new batch reports new outcomes: the previous ones must not be read
-        // as if they belonged to this one.
-        setResults(null)
         try {
           const response = await fetch(HOST_OPS_PATH, {
             method: 'POST',
@@ -2618,7 +2548,6 @@ window.__ModuleLoader__.load({
           }
           if (!response.ok) throw new Error('board ops failed: HTTP ' + response.status)
           const body = await response.json()
-          if (body !== null && body !== undefined && Array.isArray(body.results)) setResults(body.results)
           // Adopt only when nothing is still waiting: otherwise this response
           // predates the user's newer edits and would revert them on screen.
           if (queueRef.current.length === 0) {
@@ -2796,7 +2725,6 @@ window.__ModuleLoader__.load({
       return [projects, commit, {
         enqueue,
         status,
-        results,
         recovered,
         stuck,
         archived,
@@ -2861,21 +2789,6 @@ window.__ModuleLoader__.load({
       let total = 0
       for (let index = 0; index < project.tasks.length; index += 1) total += project.tasks[index].progress
       return Math.round(total / project.tasks.length)
-    }
-
-    /**
-     * The badge text for one reference kind.
-     *
-     * Three kinds share one list, so the label is resolved in one place instead of
-     * a nested ternary at each render site.
-     * @param t - translation lookup.
-     * @param kind - 'link', 'note' or 'other'.
-     * @returns the localized badge text.
-     */
-    function referenceKindLabel(t, kind) {
-      if (kind === 'link') return t('references.kindLink')
-      if (kind === 'other') return t('references.kindOther')
-      return t('references.kindNote')
     }
 
     /**
@@ -3136,11 +3049,8 @@ window.__ModuleLoader__.load({
     function buildDispatchPrompt(task, project) {
       const lines = ['请执行看板上的这个子任务。', '', '标题：' + task.title]
       if (task.note !== '') lines.push('说明：' + task.note)
-      if (project.references.length > 0) {
-        lines.push('', '项目资料：')
-        for (const reference of project.references) {
-          lines.push('- [' + (reference.kind === 'link' ? '链接' : (reference.kind === 'note' ? '约定' : '其它')) + '] ' + reference.name + (reference.value === '' ? '' : '：' + reference.value))
-        }
+      if (project.materials !== '') {
+        lines.push('', '项目资料：', project.materials)
       }
       const linked = project.memory.filter(entry => entry.taskId === task.id)
       if (linked.length > 0) {
@@ -3338,7 +3248,7 @@ window.__ModuleLoader__.load({
      * @returns the card element.
      */
     function TaskCard({
-      task, t, linkedMemory, summary, sessionOptions, sessionBusy, sessionError, references, actions,
+      task, t, linkedMemory, summary, sessionOptions, sessionBusy, sessionError, actions,
     }) {
       const [rejecting, setRejecting] = React.useState(false)
       const [reason, setReason] = React.useState('')
@@ -3627,18 +3537,6 @@ window.__ModuleLoader__.load({
           title: t('task.tagsPlaceholder'),
           onChange: (event) => { actions.tags(event.target.value) },
         })),
-      references.length === 0
-        ? null
-        : h('div', { className: 'dsh-board__refRow' },
-          h('span', { className: 'dsh-board__sessionLabel' }, t('task.refs')),
-          references.map(reference => h('button', {
-            key: reference.id,
-            type: 'button',
-            className: 'dsh-board__chip dsh-board__chip--toggle',
-            'data-active': task.refs.includes(reference.id) ? 'true' : undefined,
-            title: reference.value === '' ? reference.name : reference.value,
-            onClick: () => { actions.toggleRef(reference.id) },
-          }, reference.name))),
       h('input', {
         className: 'dsh-board__taskNote',
         type: 'text',
@@ -3723,26 +3621,18 @@ window.__ModuleLoader__.load({
      * @param props - the selected project, its update callbacks, Session data, and locale seat.
      * @returns the detail element.
      */
-    function ProjectDetail({ project, t, actions, sessionsSnapshot, syncStatus, batchResults }) {
+    function ProjectDetail({ project, t, actions, sessionsSnapshot, materialsTyping }) {
       const [describeDraft, setDescribeDraft] = React.useState('')
       const [memoryDraft, setMemoryDraft] = React.useState('')
       const [memoryLink, setMemoryLink] = React.useState('')
       const [busyTaskId, setBusyTaskId] = React.useState('')
       const [sessionError, setSessionError] = React.useState('')
-      const [intakeDraft, setIntakeDraft] = React.useState('')
-      // A scan reports a local-only line. The Host owns the filesystem, so the
-      // counts come from the batch result when the Host returns one; without it
-      // only the added entries can be counted, from the references that landed.
-      const [intakePending, setIntakePending] = React.useState(null)
       // An AI draft is a proposal, not the truth: it is edited here before it can
-      // become cards. The edit keeps the whole item list, so refs and deliverables
-      // on unchanged rows survive the save.
+      // become cards. The edit keeps the whole item list, so the tags and
+      // deliverables on unchanged rows survive the save.
       const [planEditing, setPlanEditing] = React.useState(false)
       const [planDraft, setPlanDraft] = React.useState({ summary: '', items: [] })
       const [planError, setPlanError] = React.useState(false)
-      // The line is computed once, when the batch that carried the scan settles,
-      // and then replayed verbatim: a later batch must not rewrite it.
-      const intakeReportRef = React.useRef({ pending: null, line: '' })
 
       const linkedCounts = React.useMemo(() => {
         const counts = {}
@@ -3762,11 +3652,6 @@ window.__ModuleLoader__.load({
       }, [project])
 
       const sessionOptions = React.useMemo(() => sessionOptionsOf(sessionsSnapshot), [sessionsSnapshot])
-      const [referenceDraft, setReferenceDraft] = React.useState({ kind: 'link', name: '', value: '', description: '' })
-      // One row at a time is edited in place: two open editors would compete for
-      // the same draft and the second save would silently win.
-      const [editingReferenceId, setEditingReferenceId] = React.useState('')
-      const [referenceEditDraft, setReferenceEditDraft] = React.useState({ kind: 'link', name: '', value: '', description: '' })
       const [filterText, setFilterText] = React.useState('')
       const [filterMode, setFilterMode] = React.useState('all')
 
@@ -3825,19 +3710,6 @@ window.__ModuleLoader__.load({
         setMemoryLink('')
       }
 
-      // A link needs something to probe, a note does not; the Host validates
-      // the same way, so the draft is only sent when it can be accepted.
-      const addReference = (event) => {
-        event.preventDefault()
-        const kind = referenceDraft.kind === 'link' ? 'link' : (referenceDraft.kind === 'other' ? 'other' : 'note')
-        const name = referenceDraft.name.trim()
-        const value = kind === 'link' ? referenceDraft.value.trim() : referenceDraft.value
-        if (name === '') return
-        if (kind === 'link' && value === '') return
-        actions.addReference(kind, name, value, referenceDraft.description.trim())
-        setReferenceDraft({ kind, name: '', value: '', description: '' })
-      }
-
       /**
        * Open the draft for editing, seeded from what the AI produced.
        */
@@ -3853,7 +3725,6 @@ window.__ModuleLoader__.load({
             note: item.note,
             priority: item.priority,
             tags: item.tags.slice(),
-            refs: item.refs.slice(),
             deliverables: item.deliverables.slice(),
           })),
         })
@@ -3894,7 +3765,6 @@ window.__ModuleLoader__.load({
             note: '',
             priority: 'normal',
             tags: [],
-            refs: [],
             deliverables: [],
           }]),
         }))
@@ -3912,63 +3782,6 @@ window.__ModuleLoader__.load({
         actions.savePlan(planDraft.summary.trim(), items.map(item => ({ ...item, title: item.title.trim() })))
         setPlanEditing(false)
         setPlanError(false)
-      }
-
-      // A material scan is a Host operation: it owns the filesystem and the
-      // directory-expansion rules, so the page only splits the pasted block into
-      // paths and reports what the Host wrote back.
-      const scanMaterials = (event) => {
-        event.preventDefault()
-        const paths = []
-        const lines = intakeDraft.split(/\r?\n/)
-        for (let index = 0; index < lines.length; index += 1) {
-          const trimmed = lines[index].trim()
-          if (trimmed === '' || paths.includes(trimmed)) continue
-          paths.push(trimmed)
-        }
-        if (paths.length === 0) return
-        intakeReportRef.current = { pending: null, line: '' }
-        setIntakePending({ before: project.references.map(reference => reference.id) })
-        setIntakeDraft('')
-        actions.intake(paths)
-      }
-
-      /**
-       * Open one reference for editing, seeded with what is on screen.
-       * @param reference - the entry being edited.
-       */
-      const startReferenceEdit = (reference) => {
-        setEditingReferenceId(reference.id)
-        setReferenceEditDraft({
-          kind: reference.kind,
-          name: reference.name,
-          value: reference.value,
-          description: reference.description,
-        })
-      }
-
-      const cancelReferenceEdit = () => {
-        setEditingReferenceId('')
-        setReferenceEditDraft({ kind: 'link', name: '', value: '', description: '' })
-      }
-
-      // Same validation as the add form, for the same reason: the Host would
-      // refuse an empty name or an empty link, so the draft never leaves the page.
-      const saveReferenceEdit = (event) => {
-        event.preventDefault()
-        if (editingReferenceId === '') return
-        const kind = referenceEditDraft.kind === 'link' ? 'link' : (referenceEditDraft.kind === 'other' ? 'other' : 'note')
-        const name = referenceEditDraft.name.trim()
-        const value = kind === 'link' ? referenceEditDraft.value.trim() : referenceEditDraft.value
-        if (name === '') return
-        if (kind === 'link' && value === '') return
-        actions.updateReference(editingReferenceId, {
-          kind,
-          name,
-          value,
-          description: referenceEditDraft.description.trim(),
-        })
-        cancelReferenceEdit()
       }
 
       const createSession = (taskId) => {
@@ -3998,7 +3811,6 @@ window.__ModuleLoader__.load({
         sessionOptions,
         sessionBusy: busyTaskId === task.id,
         sessionError: busyTaskId === '' && sessionError !== '' ? sessionError : '',
-        references: project.references,
         actions: {
           title: (value) => { actions.updateTask(task.id, { title: value, titleSource: 'manual' }) },
           progress: (value) => { actions.updateTask(task.id, { progress: value }) },
@@ -4011,12 +3823,6 @@ window.__ModuleLoader__.load({
           tags: (value) => {
             const tags = value.split(',').map(part => part.trim()).filter(part => part !== '')
             actions.updateTask(task.id, { tags })
-          },
-          toggleRef: (entryId) => {
-            const refs = task.refs.includes(entryId)
-              ? task.refs.filter(ref => ref !== entryId)
-              : task.refs.concat([entryId])
-            actions.updateTask(task.id, { refs })
           },
           remove: () => { actions.deleteTask(task.id) },
           createSession: () => { createSession(task.id) },
@@ -4084,43 +3890,6 @@ window.__ModuleLoader__.load({
       }))
 
       const linkOptions = project.tasks.map(task => h('option', { key: task.id, value: task.id }, task.title))
-
-      // Wait for the batch that carried the scan to settle before reporting: the
-      // references only exist once the Host adopted the operation. The line is
-      // cached per scan so unrelated later batches cannot rewrite it.
-      let intakeLine = ''
-      if (intakePending !== null) {
-        const cached = intakeReportRef.current
-        if (cached.pending === intakePending) {
-          intakeLine = cached.line
-        } else if (syncStatus === 'synced' || syncStatus === 'local') {
-          // Only a settled board is worth reporting: offline or conflicted work
-          // is still queued, and its counts are not known yet.
-          const batch = Array.isArray(batchResults) ? batchResults : []
-          let report = null
-          for (let index = batch.length - 1; index >= 0; index -= 1) {
-            const candidate = batch[index]
-            if (candidate !== null && typeof candidate === 'object' && candidate.type === 'reference.intake') {
-              report = candidate
-              break
-            }
-          }
-          let added = 0
-          let skipped = 0
-          let missing = 0
-          if (report !== null && Array.isArray(report.added)) {
-            added = report.added.length
-            if (Array.isArray(report.skipped)) skipped = report.skipped.length
-            if (Array.isArray(report.missing)) missing = report.missing.length
-          } else {
-            for (let index = 0; index < project.references.length; index += 1) {
-              if (intakePending.before.indexOf(project.references[index].id) < 0) added += 1
-            }
-          }
-          intakeLine = fill(fill(fill(t('references.intakeHint'), String(added)), String(skipped)), String(missing))
-          intakeReportRef.current = { pending: intakePending, line: intakeLine }
-        }
-      }
 
       return h('section', { className: 'dsh-board__detail' },
         h('div', { className: 'dsh-board__hero' },
@@ -4195,143 +3964,17 @@ window.__ModuleLoader__.load({
                 t('task.running') + ' ' + String(counts.running)))),
         h('div', { className: 'dsh-board__card' },
           h('div', { className: 'dsh-board__sectionHead' },
-            h('span', { className: 'dsh-board__sectionTitle' }, t('references.section')),
-            h('span', { className: 'dsh-board__sectionHint' }, t('references.hint'))),
-          h('form', { className: 'dsh-board__form', onSubmit: scanMaterials },
-            h('textarea', {
-              className: 'dsh-board__shared',
-              rows: 3,
-              value: intakeDraft,
-              placeholder: t('references.intakePlaceholder'),
-              'aria-label': t('references.intakePlaceholder'),
-              onChange: (event) => { setIntakeDraft(event.target.value) },
-            }),
-            h('button', { type: 'submit', className: 'dsh-board__ghost' }, t('references.intake'))),
-          intakeLine === ''
-            ? null
-            : h('p', { className: 'dsh-board__sectionHint', role: 'status' }, intakeLine),
-          h('form', { className: 'dsh-board__form', onSubmit: addReference },
-            h('select', {
-              className: 'dsh-board__select dsh-board__select--compact',
-              value: referenceDraft.kind,
-              'aria-label': t('references.kind'),
-              title: t('references.kind'),
-              onChange: (event) => { setReferenceDraft({ ...referenceDraft, kind: event.target.value }) },
-            },
-            h('option', { value: 'link' }, t('references.kindLink')),
-            h('option', { value: 'note' }, t('references.kindNote'))),
-            h('input', {
-              className: 'dsh-board__input dsh-board__input--compact',
-              type: 'text',
-              value: referenceDraft.name,
-              placeholder: t('references.name'),
-              'aria-label': t('references.name'),
-              onChange: (event) => { setReferenceDraft({ ...referenceDraft, name: event.target.value }) },
-            }),
-            referenceDraft.kind !== 'link'
-              ? h('textarea', {
-                className: 'dsh-board__shared',
-                rows: 3,
-                value: referenceDraft.value,
-                placeholder: t('references.noteValue'),
-                'aria-label': t('references.noteValue'),
-                onChange: (event) => { setReferenceDraft({ ...referenceDraft, value: event.target.value }) },
-              })
-              : h('input', {
-                className: 'dsh-board__input dsh-board__input--compact',
-                type: 'text',
-                value: referenceDraft.value,
-                placeholder: t('references.linkValue'),
-                'aria-label': t('references.linkValue'),
-                onChange: (event) => { setReferenceDraft({ ...referenceDraft, value: event.target.value }) },
-              }),
-            h('input', {
-              className: 'dsh-board__input dsh-board__input--compact',
-              type: 'text',
-              value: referenceDraft.description,
-              placeholder: t('references.description'),
-              'aria-label': t('references.description'),
-              onChange: (event) => { setReferenceDraft({ ...referenceDraft, description: event.target.value }) },
-            }),
-            h('button', { type: 'submit', className: 'dsh-board__ghost' }, t('references.add'))),
-          project.references.length === 0
-            ? h('p', { className: 'dsh-board__empty' }, t('references.empty'))
-            : h('div', { className: 'dsh-board__memoryList' },
-              project.references.map(reference => h('div', { key: reference.id, className: 'dsh-board__memoryItem' },
-                editingReferenceId === reference.id
-                  ? h('form', { className: 'dsh-board__form', onSubmit: saveReferenceEdit },
-                    h('select', {
-                      className: 'dsh-board__select dsh-board__select--compact',
-                      value: referenceEditDraft.kind,
-                      'aria-label': t('references.kind'),
-                      title: t('references.kind'),
-                      onChange: (event) => { setReferenceEditDraft({ ...referenceEditDraft, kind: event.target.value }) },
-                    },
-                    h('option', { value: 'link' }, t('references.kindLink')),
-                    h('option', { value: 'note' }, t('references.kindNote'))),
-                    h('input', {
-                      className: 'dsh-board__input dsh-board__input--compact',
-                      type: 'text',
-                      value: referenceEditDraft.name,
-                      placeholder: t('references.name'),
-                      'aria-label': t('references.name'),
-                      onChange: (event) => { setReferenceEditDraft({ ...referenceEditDraft, name: event.target.value }) },
-                    }),
-                    referenceEditDraft.kind !== 'link'
-                      ? h('textarea', {
-                        className: 'dsh-board__shared',
-                        rows: 3,
-                        value: referenceEditDraft.value,
-                        placeholder: t('references.noteValue'),
-                        'aria-label': t('references.noteValue'),
-                        onChange: (event) => { setReferenceEditDraft({ ...referenceEditDraft, value: event.target.value }) },
-                      })
-                      : h('input', {
-                        className: 'dsh-board__input dsh-board__input--compact',
-                        type: 'text',
-                        value: referenceEditDraft.value,
-                        placeholder: t('references.linkValue'),
-                        'aria-label': t('references.linkValue'),
-                        onChange: (event) => { setReferenceEditDraft({ ...referenceEditDraft, value: event.target.value }) },
-                      }),
-                    h('input', {
-                      className: 'dsh-board__input dsh-board__input--compact',
-                      type: 'text',
-                      value: referenceEditDraft.description,
-                      placeholder: t('references.description'),
-                      'aria-label': t('references.description'),
-                      onChange: (event) => { setReferenceEditDraft({ ...referenceEditDraft, description: event.target.value }) },
-                    }),
-                    h('button', { type: 'submit', className: 'dsh-board__ghost' }, t('references.save')),
-                    h('button', { type: 'button', className: 'dsh-board__ghost', onClick: cancelReferenceEdit }, t('references.cancel')))
-                  : [
-                    h('span', { key: 'chip', className: 'dsh-board__chip' },
-                      referenceKindLabel(t, reference.kind)),
-                    h('span', { key: 'text', className: 'dsh-board__memoryText' },
-                      reference.value === '' ? reference.name : reference.name + '：' + reference.value),
-                    reference.description === ''
-                      ? null
-                      : h('span', { key: 'desc', className: 'dsh-board__sectionHint' }, reference.description),
-                    reference.kind === 'link' && reference.staleSince > 0
-                      ? h('span', { key: 'stale', className: 'dsh-board__badge', 'data-tone': 'warn' }, t('task.staleRef'))
-                      : null,
-                    h('button', {
-                      key: 'edit',
-                      type: 'button',
-                      className: 'dsh-board__delete',
-                      'aria-label': t('references.edit'),
-                      title: t('references.edit'),
-                      onClick: () => { startReferenceEdit(reference) },
-                    }, '\u270e'),
-                    h('button', {
-                      key: 'delete',
-                      type: 'button',
-                      className: 'dsh-board__delete',
-                      'aria-label': t('references.delete'),
-                      title: t('references.delete'),
-                      onClick: () => { actions.removeReference(reference.id) },
-                    }, '\u00d7'),
-                  ]))),
+            h('span', { className: 'dsh-board__sectionTitle' }, t('materials.section')),
+            h('span', { className: 'dsh-board__materialsState', role: 'status' },
+              materialsTyping ? t('materials.typing') : t('materials.saved'))),
+          h('textarea', {
+            className: 'dsh-board__shared',
+            rows: 6,
+            value: project.materials,
+            placeholder: t('materials.placeholder'),
+            'aria-label': t('materials.section'),
+            onChange: (event) => { actions.setMaterials(event.target.value) },
+          }),
           h('button', {
             type: 'button',
             className: 'dsh-board__ghost',
@@ -4395,11 +4038,7 @@ window.__ModuleLoader__.load({
                     h('span', { className: 'dsh-board__memoryText' }, entry.title),
                     entry.note === ''
                       ? null
-                      : h('span', { className: 'dsh-board__sectionHint' }, truncateText(entry.note, PLAN_NOTE_PREVIEW)),
-                    entry.refs.length === 0
-                      ? null
-                      : h('span', { className: 'dsh-board__chip' },
-                        fill(t('plan.refCount'), String(entry.refs.length)))))),
+                      : h('span', { className: 'dsh-board__sectionHint' }, truncateText(entry.note, PLAN_NOTE_PREVIEW))))),
                 h('div', { key: 'controls', className: 'dsh-board__form' },
                   h('button', {
                     type: 'button',
@@ -4598,7 +4237,7 @@ window.__ModuleLoader__.load({
           return
         }
         setMissingProjectName(false)
-        const project = { id: createId('p'), name, plan: null, references: [], tasks: [], memory: [], createdAt: Date.now() }
+        const project = { id: createId('p'), name, plan: null, materials: '', tasks: [], memory: [], createdAt: Date.now() }
         commit(projects.concat([project]))
         sync.enqueue([{ type: 'project.add', id: project.id, name }])
         setProjectDraft('')
@@ -4606,6 +4245,46 @@ window.__ModuleLoader__.load({
       }
 
       const selectedProjectId = selected === null ? '' : selected.id
+
+      // The materials text is written locally first, then sent once the typing
+      // stops: one op per edit instead of one per keystroke. The pending write
+      // carries the project it was typed into, so selecting another project in
+      // the middle of a burst cannot misroute it.
+      const materialsTimerRef = React.useRef(null)
+      const materialsPendingRef = React.useRef(null)
+      const [materialsTyping, setMaterialsTyping] = React.useState(false)
+
+      /** Send the pending materials text, if any. */
+      const flushMaterials = () => {
+        const pending = materialsPendingRef.current
+        if (pending === null) return
+        materialsPendingRef.current = null
+        sync.enqueue([{ type: 'project.setMaterials', projectId: pending.projectId, materials: pending.materials }])
+      }
+
+      /** Arm the debounce that writes the pending materials text to the Host. */
+      const scheduleMaterialsWrite = (projectId, materials) => {
+        if (materialsTimerRef.current !== null) clearTimeout(materialsTimerRef.current)
+        const pending = materialsPendingRef.current
+        // Typing in another project ends the previous burst: send that text now
+        // instead of dropping it when this project's text takes its place.
+        if (pending !== null && pending.projectId !== projectId) flushMaterials()
+        materialsPendingRef.current = { projectId, materials }
+        setMaterialsTyping(true)
+        materialsTimerRef.current = setTimeout(() => {
+          materialsTimerRef.current = null
+          setMaterialsTyping(false)
+          flushMaterials()
+        }, MATERIALS_DEBOUNCE_MS)
+      }
+
+      // Leaving the page must not drop an edit still inside the debounce window:
+      // send it once before the page goes away.
+      React.useEffect(() => () => {
+        if (materialsTimerRef.current !== null) clearTimeout(materialsTimerRef.current)
+        materialsTimerRef.current = null
+        flushMaterials()
+      }, [])
 
       /** Drop the undo offer and cancel its timer. */
       const dismissUndo = () => {
@@ -4652,12 +4331,14 @@ window.__ModuleLoader__.load({
           replaceProject(selectedProjectId, project => ({ ...project, name: value }))
           sync.enqueue([{ type: 'project.rename', projectId: selectedProjectId, name: value }])
         },
-        // A material scan is written by the Host: it expands directories and
-        // records the paths relative to the project root, so this side only
-        // carries the requested paths and lets the returned board land.
-        intake: (paths) => {
-          if (selectedProjectId === '' || !Array.isArray(paths) || paths.length === 0) return
-          sync.enqueue([{ type: 'reference.intake', projectId: selectedProjectId, paths }])
+        // The materials card is one text field: the mirror changes on every keystroke
+        // and the debounced write carries the whole text, so an edit is one op.
+        setMaterials: (value) => {
+          if (selectedProjectId === '') return
+          const text = typeof value === 'string' ? value : ''
+          const materials = text.length > MAX_MATERIALS_LENGTH ? text.slice(0, MAX_MATERIALS_LENGTH) : text
+          replaceProject(selectedProjectId, project => ({ ...project, materials }))
+          scheduleMaterialsWrite(selectedProjectId, materials)
         },
         // The draft becomes cards on the Host; it clears the plan there and the
         // adopted board removes the card here.
@@ -4666,7 +4347,7 @@ window.__ModuleLoader__.load({
           sync.enqueue([{ type: 'plan.apply', projectId: selectedProjectId }])
         },
         // A hand-edited draft overwrites the stored one; the Host keeps the
-        // per-item detail the page does not edit (refs, deliverables, tags).
+        // per-item detail the page does not edit (deliverables and tags).
         savePlan: (summary, items) => {
           if (selectedProjectId === '') return
           sync.enqueue([{ type: 'plan.set', projectId: selectedProjectId, summary, items }])
@@ -4682,40 +4363,6 @@ window.__ModuleLoader__.load({
               sync.enqueue([{ type: 'plan.discard', projectId: selectedProjectId }])
             },
           })
-        },
-        addReference: (kind, name, value, description) => {
-          if (selectedProjectId === '') return
-          const reference = {
-            id: createId('ref-'),
-            kind,
-            name,
-            value,
-            description,
-            staleSince: 0,
-          }
-          replaceProject(selectedProjectId, project => ({
-            ...project,
-            references: project.references.concat([reference]),
-          }))
-          sync.enqueue([{
-            type: 'reference.add',
-            projectId: selectedProjectId,
-            id: reference.id,
-            kind,
-            name,
-            value,
-            description,
-          }])
-        },
-        updateReference: (referenceId, patch) => {
-          if (selectedProjectId === '') return
-          replaceProject(selectedProjectId, project => ({
-            ...project,
-            references: project.references.map(reference => (reference.id === referenceId
-              ? { ...reference, ...patch }
-              : reference)),
-          }))
-          sync.enqueue([{ type: 'reference.update', projectId: selectedProjectId, referenceId, patch }])
         },
         setAcceptance: (mode) => {
           if (selectedProjectId === '') return
@@ -4892,26 +4539,6 @@ window.__ModuleLoader__.load({
           if (drag === null || selectedProjectId === '') return
           if (drag.status === status) return
           actions.moveTask(drag.taskId, drag.status, status)
-        },
-        removeReference: (referenceId) => {
-          if (selectedProjectId === '') return
-          const project = projects.find(entry => entry.id === selectedProjectId)
-          const target = project === undefined ? undefined : project.references.find(entry => entry.id === referenceId)
-          if (target === undefined) return
-          askConfirm({
-            title: fill(t('confirm.deleteRef'), target.name),
-            body: target.value === '' ? t('confirm.deleteRefBody') : target.value,
-            confirmLabel: t('confirm.delete'),
-            tone: 'danger',
-            onConfirm: () => {
-              replaceProject(selectedProjectId, entry => ({
-                ...entry,
-                references: entry.references.filter(item => item.id !== referenceId),
-                tasks: entry.tasks.map(task => ({ ...task, refs: task.refs.filter(ref => ref !== referenceId) })),
-              }))
-              sync.enqueue([{ type: 'reference.remove', projectId: selectedProjectId, referenceId }])
-            },
-          })
         },
         restoreTask: (taskId) => {
           if (selectedProjectId === '') return
@@ -5315,8 +4942,7 @@ window.__ModuleLoader__.load({
               t,
               actions: { ...actions, archived: sync.archived || [] },
               sessionsSnapshot,
-              syncStatus: sync.status,
-              batchResults: sync.results,
+              materialsTyping,
             })),
         undo === null
           ? null

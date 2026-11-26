@@ -19,12 +19,14 @@
  *      `sharedEntries` list; `link` references are re-checked, `note` ones are
  *      convention text that is never probed)
  *  11 (a project may hold one `plan`: a draft breakdown of subtasks that a
- *      human confirms before it becomes real cards; materials can be scanned
- *      from local paths and links through `reference.intake`)
+ *      human confirms before it becomes real cards)
+ *  12 (project material is one free-text `materials` block: the typed
+ *      `references` list, the card `refs` and the draft item `refs` are gone,
+ *      and an older document is merged into that text on load)
  */
 
 /** Version written by this module. */
-export const DOC_VERSION = 11
+export const DOC_VERSION = 12
 
 /** Subtask columns, in board order. */
 export const TASK_STATUSES = ['backlog', 'todo', 'running', 'review', 'done', 'failed']
@@ -104,13 +106,9 @@ function isHumanOrigin(origin) {
 
 /** Longest accepted title / name. */
 export const MAX_TITLE_LENGTH = 200
-/** Longest accepted free text: a note reference, or the anchor digest. */
-export const MAX_SHARED_LENGTH = 20000
-/** Longest accepted link value: a path or URL. */
-export const MAX_LINK_LENGTH = 1000
-/** Kinds a project reference can have. */
-export const REFERENCE_KINDS = ['link', 'note', 'other']
-/** Name the legacy `project.shared` text is carried over under. */
+/** Longest accepted project material text. */
+export const MAX_MATERIALS_LENGTH = 20000
+/** Name the legacy `project.shared` free text is carried over under. */
 const LEGACY_SHARED_NAME = '项目说明'
 /** Longest accepted note text. */
 export const MAX_NOTE_LENGTH = 8000
@@ -373,7 +371,7 @@ function asAnchor(value) {
     }
   }
   return {
-    digest: bounded(asString(source.digest).trim(), MAX_SHARED_LENGTH),
+    digest: bounded(asString(source.digest).trim(), MAX_MATERIALS_LENGTH),
     decisions,
     risks: asLines(source.risks),
     deviations: asLines(source.deviations),
@@ -466,23 +464,6 @@ function asTags(value) {
 }
 
 /**
- * Keep a string list of reference ids, bounded.
- * @param value - candidate list.
- * @returns the normalized ids.
- */
-function asRefs(value) {
-  if (!Array.isArray(value)) return []
-  const refs = []
-  for (const candidate of value) {
-    if (typeof candidate !== 'string' || candidate === '') continue
-    if (refs.includes(candidate)) continue
-    if (refs.length >= 20) break
-    refs.push(candidate)
-  }
-  return refs
-}
-
-/**
  * Normalize a due date: an ISO date (`YYYY-MM-DD`) or the empty string.
  * @param value - candidate value.
  * @returns the normalized date or ''.
@@ -513,7 +494,8 @@ function emptyProject() {
     gates: asGates({}),
     anchor: asAnchor({}),
     rootDir: '',
-    references: [],
+    // One free-text block: document paths, conventions and links all live here.
+    materials: '',
     // The draft breakdown of subtasks, or null when there is none.
     plan: null,
     tasks: [],
@@ -541,7 +523,6 @@ function normalizeTask(raw) {
     priority: asPriority(raw.priority, 'normal'),
     dueDate: asDueDate(raw.dueDate),
     tags: asTags(raw.tags),
-    refs: asRefs(raw.refs),
     blocked: raw.blocked === true,
     requireHuman: raw.requireHuman === true,
     evidence: bounded(asString(raw.evidence), MAX_EVIDENCE_LENGTH),
@@ -587,53 +568,73 @@ function normalizeMemory(raw) {
 }
 
 /**
- * Normalize one project reference: a `link` (a path or URL that is re-checked
- * and that cards may point at) or a `note` (convention text that is never
- * probed).
- * @param raw - candidate reference.
- * @returns a normalized reference, or null when unusable.
+ * Read one stored material entry of a version-11 (or older) document.
+ *
+ * Only what the text rendering needs is kept: the merged block has no per-entry
+ * identity, so ids and stale marks are dropped here.
+ * @param raw - candidate entry.
+ * @returns `{ kind, name, value, description }`, or null when unusable.
  */
-function normalizeReference(raw) {
+function asMaterialEntry(raw) {
   if (!isRecord(raw)) return null
   const name = asString(raw.name).trim()
   if (name === '') return null
-  const kind = raw.kind === 'note' ? 'note' : 'link'
   return {
-    id: typeof raw.id === 'string' && raw.id !== '' ? raw.id : createId('ref-'),
-    kind,
+    // Only a `note` renders differently from the rest; `link` and `other` are
+    // both named pointers, so folding them together loses nothing.
+    kind: raw.kind === 'note' ? 'note' : 'link',
     name: bounded(name, MAX_TITLE_LENGTH),
-    value: kind === 'link'
-      ? bounded(asString(raw.value).trim(), MAX_LINK_LENGTH)
-      : bounded(asString(raw.value), MAX_SHARED_LENGTH),
-    description: bounded(asString(raw.description).trim(), MAX_NOTE_LENGTH),
-    // Only a link can be stale: a note is text and has no path to lose.
-    staleSince: kind === 'link'
-      && typeof raw.staleSince === 'number' && Number.isFinite(raw.staleSince) && raw.staleSince > 0
-      ? raw.staleSince
-      : 0,
+    value: asString(raw.value),
+    description: asString(raw.description).trim(),
   }
 }
 
 /**
- * Carry one version-9 shared entry over as a link reference.
+ * Read one version-9 shared entry: a named path, which becomes a link entry.
  * @param raw - legacy entry.
- * @returns a normalized reference, or null when unusable.
+ * @returns `{ kind, name, value, description }`, or null when unusable.
  */
-function normalizeLegacySharedEntry(raw) {
+function asLegacySharedEntry(raw) {
   if (!isRecord(raw)) return null
   const name = asString(raw.name).trim()
   if (name === '') return null
   return {
-    // The entry id is kept: cards already point at it through `task.refs`.
-    id: typeof raw.id === 'string' && raw.id !== '' ? raw.id : createId('ref-'),
     kind: 'link',
     name: bounded(name, MAX_TITLE_LENGTH),
-    value: bounded(asString(raw.path).trim(), MAX_LINK_LENGTH),
-    description: bounded(asString(raw.description).trim(), MAX_NOTE_LENGTH),
-    staleSince: typeof raw.staleSince === 'number' && Number.isFinite(raw.staleSince) && raw.staleSince > 0
-      ? raw.staleSince
-      : 0,
+    value: asString(raw.path).trim(),
+    description: asString(raw.description).trim(),
   }
+}
+
+/**
+ * Render one stored material entry as a line of the free-text block.
+ *
+ * A `note` is convention text that already reads as a sentence, so its
+ * description is not repeated; a link keeps one, because that is where a
+ * version-11 document recorded what the target is.
+ * @param entry - entry to render.
+ * @returns the line.
+ */
+function materialLine(entry) {
+  const value = entry.value === '' ? '' : '：' + entry.value
+  const description = entry.kind === 'note' || entry.description === '' ? '' : '（' + entry.description + '）'
+  return '- ' + entry.name + value + description
+}
+
+/**
+ * Merge a stored document's material into the one free-text block.
+ *
+ * A block that is already written wins: reading a document that has been
+ * migrated once must not append its entries again.
+ *
+ * @param raw - stored project.
+ * @param entries - the project's material entries, in stored order.
+ * @returns the material text, bounded.
+ */
+function asMaterials(raw, entries) {
+  const stored = asString(raw.materials)
+  if (stored.trim() !== '') return bounded(stored, MAX_MATERIALS_LENGTH)
+  return bounded(entries.map(materialLine).join('\n'), MAX_MATERIALS_LENGTH)
 }
 
 /**
@@ -653,10 +654,9 @@ function isStringArray(value) {
  * failing the load.
  *
  * @param value - candidate item list.
- * @param knownReferences - reference ids the project actually has.
  * @returns the normalized items, in order, bounded.
  */
-function normalizePlanItems(value, knownReferences) {
+function normalizePlanItems(value) {
   const items = []
   for (const candidate of Array.isArray(value) ? value : []) {
     if (!isRecord(candidate)) continue
@@ -667,7 +667,6 @@ function normalizePlanItems(value, knownReferences) {
       note: bounded(asString(candidate.note), MAX_NOTE_LENGTH),
       priority: asPriority(candidate.priority, 'normal'),
       tags: asTags(candidate.tags),
-      refs: asRefs(candidate.refs).filter(ref => knownReferences.has(ref)),
       deliverables: asDeliverables(candidate.deliverables),
     })
     if (items.length >= MAX_PLAN_ITEMS) break
@@ -683,12 +682,11 @@ function normalizePlanItems(value, knownReferences) {
  * render as an empty card, so both come back as `null`.
  *
  * @param raw - candidate plan.
- * @param knownReferences - reference ids the project actually has.
  * @returns a normalized plan, or null.
  */
-function normalizePlan(raw, knownReferences) {
+function normalizePlan(raw) {
   if (!isRecord(raw)) return null
-  const items = normalizePlanItems(raw.items, knownReferences)
+  const items = normalizePlanItems(raw.items)
   if (items.length === 0) return null
   return {
     id: typeof raw.id === 'string' && raw.id !== '' ? raw.id : createId('plan-'),
@@ -704,26 +702,25 @@ function normalizePlan(raw, knownReferences) {
  * Unlike a document load, invalid input is refused outright: a draft is written
  * once, so an item silently dropped here would be a lost instruction.
  *
- * @param project - project the plan belongs to.
  * @param value - candidate item list.
  * @returns `{ items }` on success, or `{ code }` when refused.
  */
-function validatePlanItems(project, value) {
+function validatePlanItems(value) {
   if (!Array.isArray(value)) return { code: 'invalid_field' }
   if (value.length < MIN_PLAN_ITEMS || value.length > MAX_PLAN_ITEMS) return { code: 'invalid_field' }
-  const knownReferences = new Set(project.references.map(entry => entry.id))
   const items = []
   for (const candidate of value) {
     if (!isRecord(candidate)) return { code: 'invalid_field' }
     if (typeof candidate.title !== 'string') return { code: 'invalid_field' }
     const title = candidate.title.trim()
     if (title === '' || title.length > MAX_TITLE_LENGTH) return { code: 'invalid_field' }
+    // A version-11 draft could carry `refs`; the field no longer exists, so it
+    // is ignored instead of refusing a payload an older client still sends.
     const item = {
       title,
       note: '',
       priority: 'normal',
       tags: [],
-      refs: [],
       deliverables: [],
     }
     if (candidate.note !== undefined) {
@@ -738,13 +735,6 @@ function validatePlanItems(project, value) {
       if (!isStringArray(candidate.tags)) return { code: 'invalid_field' }
       item.tags = asTags(candidate.tags)
     }
-    if (candidate.refs !== undefined) {
-      if (!isStringArray(candidate.refs)) return { code: 'invalid_field' }
-      for (const ref of candidate.refs) {
-        if (!knownReferences.has(ref)) return { code: 'invalid_field' }
-      }
-      item.refs = asRefs(candidate.refs)
-    }
     if (candidate.deliverables !== undefined) {
       if (!isStringArray(candidate.deliverables)) return { code: 'invalid_field' }
       item.deliverables = asDeliverables(candidate.deliverables)
@@ -756,7 +746,7 @@ function validatePlanItems(project, value) {
 
 /**
  * Turn one plan item into a subtask record, at the task defaults the contract
- * states: `todo`, zero progress, and the item's note/priority/tags/refs/
+ * states: `todo`, zero progress, and the item's note/priority/tags/
  * deliverables carried over.
  * @param item - normalized plan item.
  * @param at - creation timestamp.
@@ -772,7 +762,6 @@ function taskFromPlanItem(item, at) {
     progress: 0,
     priority: item.priority,
     tags: item.tags,
-    refs: item.refs,
     deliverables: item.deliverables,
     createdAt: at,
     updatedAt: at,
@@ -824,43 +813,26 @@ function normalizeProject(raw) {
     if (entry.taskId !== '' && !known.has(entry.taskId)) entry.taskId = ''
   }
   // Version 9 kept project material in two fields: a free-text `shared` block
-  // and a `sharedEntries` list of named paths. Version 10 folds both into one
-  // typed list, so a stored v9 document is migrated here, in memory, before
+  // and a `sharedEntries` list of named paths; versions 10 and 11 kept one typed
+  // `references` list. Version 12 folds all of them into a single free-text
+  // block, so a stored older document is migrated here, in memory, before
   // anything reads it; the legacy fields are dropped from what gets written.
-  const references = []
+  const entries = []
   for (const candidate of Array.isArray(raw.references) ? raw.references : []) {
-    const reference = normalizeReference(candidate)
-    if (reference !== null) references.push(reference)
+    const entry = asMaterialEntry(candidate)
+    if (entry !== null) entries.push(entry)
   }
   const shared = asString(raw.shared)
   if (shared.trim() !== '') {
-    // The old free text becomes a note, kept first: that is where it was read.
-    references.unshift({
-      id: createId('ref-'),
-      kind: 'note',
-      name: LEGACY_SHARED_NAME,
-      value: bounded(shared, MAX_SHARED_LENGTH),
-      description: '',
-      staleSince: 0,
-    })
+    // The old free text becomes the first line: that is where it was read.
+    entries.unshift({ kind: 'note', name: LEGACY_SHARED_NAME, value: shared, description: '' })
   }
   for (const candidate of Array.isArray(raw.sharedEntries) ? raw.sharedEntries : []) {
-    const reference = normalizeLegacySharedEntry(candidate)
-    if (reference !== null) references.push(reference)
+    const entry = asLegacySharedEntry(candidate)
+    if (entry !== null) entries.push(entry)
   }
-  // A hand-edited document may repeat an id; the first one keeps it so the
-  // cards that already point at it stay valid.
-  const knownReferences = new Set()
-  for (const reference of references) {
-    while (knownReferences.has(reference.id)) reference.id = createId('ref-')
-    knownReferences.add(reference.id)
-  }
-  for (const task of tasks) {
-    task.refs = task.refs.filter(ref => knownReferences.has(ref))
-  }
-  // The draft breakdown is validated against the same reference ids as the
-  // cards: a plan that pointed at a removed reference would be a dead link.
-  const plan = normalizePlan(raw.plan, knownReferences)
+  const materials = asMaterials(raw, entries)
+  const plan = normalizePlan(raw.plan)
   const trash = []
   const trashSource = Array.isArray(raw.trash) ? raw.trash : []
   const cutoff = Date.now() - TRASH_RETENTION_MS
@@ -880,7 +852,7 @@ function normalizeProject(raw) {
     anchor: asAnchor(raw.anchor),
     lastCheckAt: typeof raw.lastCheckAt === 'number' && Number.isFinite(raw.lastCheckAt) ? raw.lastCheckAt : 0,
     rootDir: bounded(asString(raw.rootDir).trim(), MAX_ROOT_LENGTH),
-    references,
+    materials,
     plan,
     tasks,
     memory,
@@ -913,7 +885,6 @@ function migrateV1(list) {
       priority: 'normal',
       dueDate: '',
       tags: [],
-      refs: [],
       blocked: false,
       requireHuman: false,
       evidence: '',
@@ -1231,7 +1202,7 @@ function clearAcceptance(task) {
 const PATCHABLE_TASK_FIELDS = [
   'title', 'titleSource', 'note', 'status', 'progress', 'blocked',
   'reviewReason', 'sessionId', 'workspaceId', 'agentPreset',
-  'priority', 'dueDate', 'tags', 'refs',
+  'priority', 'dueDate', 'tags',
   'evidence', 'deliverables', 'requireHuman',
   'nextAction', 'pendingVerification',
 ]
@@ -1285,10 +1256,6 @@ function applyTaskPatch(task, patch) {
     if (!Array.isArray(patch.tags)) return 'invalid_field'
     task.tags = asTags(patch.tags)
   }
-  if ('refs' in patch) {
-    if (!Array.isArray(patch.refs)) return 'invalid_field'
-    task.refs = asRefs(patch.refs)
-  }
   if ('evidence' in patch) {
     if (typeof patch.evidence !== 'string') return 'invalid_field'
     task.evidence = bounded(patch.evidence, MAX_EVIDENCE_LENGTH)
@@ -1310,119 +1277,6 @@ function applyTaskPatch(task, patch) {
       .slice(0, 20)
   }
   task.updatedAt = Date.now()
-  return null
-}
-
-/* --------------------------------------------------------------- references */
-
-/**
- * Find one reference inside a project.
- * @param project - project to search.
- * @param referenceId - reference identity.
- * @returns the reference, or undefined.
- */
-function findReference(project, referenceId) {
-  return project.references.find(entry => entry.id === referenceId)
-}
-
-/**
- * Append one reference to a project.
- *
- * The two kinds are validated differently on purpose: a link must carry a path
- * or URL, because that is what the stale sweep probes; a note is free text and
- * has nothing to resolve.
- *
- * @param project - project to mutate.
- * @param op - `{ id?, kind, name, value, description? }`.
- * @returns null on success, or an error code.
- */
-function addReference(project, op) {
-  if (project === undefined) return 'unknown_project'
-  if (!REFERENCE_KINDS.includes(op.kind)) return 'invalid_field'
-  const name = typeof op.name === 'string' ? op.name.trim() : ''
-  if (name === '') return 'invalid_field'
-  if (typeof op.value !== 'string') return 'invalid_field'
-  if (op.description !== undefined && typeof op.description !== 'string') return 'invalid_field'
-  const kind = op.kind
-  const raw = kind === 'link' ? op.value.trim() : op.value
-  if (kind === 'link' && raw === '') return 'invalid_field'
-  const id = typeof op.id === 'string' && op.id !== '' ? op.id : createId('ref-')
-  if (findReference(project, id) !== undefined) return 'duplicate_id'
-  project.references.push({
-    id,
-    kind,
-    name: bounded(name, MAX_TITLE_LENGTH),
-    value: kind === 'link' ? bounded(raw, MAX_LINK_LENGTH) : bounded(raw, MAX_SHARED_LENGTH),
-    description: bounded(asString(op.description).trim(), MAX_NOTE_LENGTH),
-    // Set when the last recheck could not find the target; 0 means it resolved.
-    staleSince: 0,
-  })
-  return null
-}
-
-/** Reference fields a patch may touch; the id is deliberately not one. */
-const PATCHABLE_REFERENCE_FIELDS = ['kind', 'name', 'value', 'description']
-
-/**
- * Merge one patch into a reference.
- * @param project - project holding it.
- * @param op - `{ referenceId, patch }`.
- * @returns null on success, or an error code.
- */
-function updateReference(project, op) {
-  if (project === undefined) return 'unknown_project'
-  const entry = typeof op.referenceId === 'string' ? findReference(project, op.referenceId) : undefined
-  if (entry === undefined) return 'unknown_reference'
-  if (!isRecord(op.patch)) return 'invalid_field'
-  for (const key of Object.keys(op.patch)) {
-    if (!PATCHABLE_REFERENCE_FIELDS.includes(key)) return 'invalid_field'
-  }
-  // The merged result is validated before the entry is touched, so a refused
-  // patch leaves the reference exactly as it was.
-  const kind = 'kind' in op.patch ? op.patch.kind : entry.kind
-  if (!REFERENCE_KINDS.includes(kind)) return 'invalid_field'
-  let name = entry.name
-  if ('name' in op.patch) {
-    if (typeof op.patch.name !== 'string' || op.patch.name.trim() === '') return 'invalid_field'
-    name = bounded(op.patch.name.trim(), MAX_TITLE_LENGTH)
-  }
-  let value = entry.value
-  if ('value' in op.patch) {
-    if (typeof op.patch.value !== 'string') return 'invalid_field'
-    value = kind === 'link' ? op.patch.value.trim() : op.patch.value
-  }
-  // Switching a note to a link needs something to probe; switching a link to a
-  // note keeps the old text, which is still readable.
-  if (kind === 'link' && value.trim() === '') return 'invalid_field'
-  value = bounded(value, kind === 'link' ? MAX_LINK_LENGTH : MAX_SHARED_LENGTH)
-  let description = entry.description
-  if ('description' in op.patch) {
-    if (typeof op.patch.description !== 'string') return 'invalid_field'
-    description = bounded(op.patch.description.trim(), MAX_NOTE_LENGTH)
-  }
-  entry.kind = kind
-  entry.name = name
-  entry.value = value
-  entry.description = description
-  // A note has no path to lose, so it can never be stale.
-  if (kind === 'note') entry.staleSince = 0
-  return null
-}
-
-/**
- * Remove one reference, dropping the card links that pointed at it.
- * @param project - project to mutate.
- * @param referenceId - reference identity.
- * @returns null on success; removing a missing reference is a no-op.
- */
-function removeReference(project, referenceId) {
-  if (project === undefined) return 'unknown_project'
-  const before = project.references.length
-  project.references = project.references.filter(entry => entry.id !== referenceId)
-  if (project.references.length === before) return null
-  for (const task of project.tasks) {
-    task.refs = task.refs.filter(ref => ref !== referenceId)
-  }
   return null
 }
 
@@ -1497,22 +1351,13 @@ export function applyOp(board, op, origin) {
       project.name = bounded(op.name, MAX_TITLE_LENGTH)
       return null
     }
-    case 'project.setShared': {
-      // Compatibility: a version-9 client still sends the free-text block. It is
-      // kept as the one note named 项目说明, and empty text removes that note.
+    case 'project.setMaterials': {
+      // Project material is one free-text block: a caller writes the whole
+      // thing, so every write replaces what was there instead of merging.
       if (project === undefined) return 'unknown_project'
-      if (typeof op.shared !== 'string') return 'invalid_field'
-      const shared = bounded(op.shared, MAX_SHARED_LENGTH)
-      const existing = project.references.find(entry => entry.kind === 'note' && entry.name === LEGACY_SHARED_NAME)
-      if (shared.trim() === '') {
-        if (existing === undefined) return null
-        return removeReference(project, existing.id)
-      }
-      if (existing !== undefined) {
-        existing.value = shared
-        return null
-      }
-      return addReference(project, { kind: 'note', name: LEGACY_SHARED_NAME, value: shared })
+      if (typeof op.materials !== 'string') return 'invalid_field'
+      project.materials = bounded(op.materials, MAX_MATERIALS_LENGTH)
+      return null
     }
     case 'project.remove': {
       if (project === undefined) return null
@@ -1535,7 +1380,6 @@ export function applyOp(board, op, origin) {
         priority: asPriority(op.priority, 'normal'),
         dueDate: asDueDate(op.dueDate),
         tags: asTags(op.tags),
-        refs: asRefs(op.refs),
         blocked: op.blocked === true,
         requireHuman: op.requireHuman === true,
         evidence: bounded(asString(op.evidence), MAX_EVIDENCE_LENGTH),
@@ -1645,25 +1489,12 @@ export function applyOp(board, op, origin) {
       return null
     }
     case 'project.recheck': {
-      // The Host probed the declared paths; apply the verdict without touching
-      // the acceptance record, which belongs to the moment a card was settled.
+      // The Host probed the declared deliverables; apply the verdict without
+      // touching the acceptance record, which belongs to the moment a card was
+      // settled.
       if (project === undefined) return 'unknown_project'
-      const stale = Array.isArray(op.staleEntries) ? op.staleEntries : []
-      const staleIds = new Set(stale.filter(id => typeof id === 'string'))
-      const at = Date.now()
-      for (const entry of project.references) {
-        // Only a link is probed; a note is text and is never stale.
-        if (entry.kind !== 'link') {
-          entry.staleSince = 0
-          continue
-        }
-        if (staleIds.has(entry.id)) {
-          if (entry.staleSince === 0) entry.staleSince = at
-        } else if (entry.value !== '') {
-          entry.staleSince = 0
-        }
-      }
       const deliverableCheck = isRecord(op.deliverables) ? op.deliverables : {}
+      const at = Date.now()
       for (const task of project.tasks) {
         const verdict = deliverableCheck[task.id]
         if (isRecord(verdict)) {
@@ -1746,58 +1577,12 @@ export function applyOp(board, op, origin) {
         : project.trash.filter(entry => entry.deletedAt >= cutoff)
       return null
     }
-    case 'reference.add': {
-      return addReference(project, op)
-    }
-    case 'reference.update': {
-      return updateReference(project, op)
-    }
-    case 'reference.remove': {
-      return removeReference(project, op.referenceId)
-    }
-    case 'reference.intake': {
-      // The prepare phase scanned the paths and resolved them (that needs the
-      // disk); applying only writes the ledger. A caller that skipped the scan
-      // has nothing to add, so it is refused instead of silently doing nothing.
-      if (project === undefined) return 'unknown_project'
-      if (!Array.isArray(op.added)) return 'invalid_field'
-      const entries = []
-      for (const candidate of op.added) {
-        if (!isRecord(candidate)) return 'invalid_field'
-        const name = asString(candidate.name).trim()
-        const value = asString(candidate.value).trim()
-        if (name === '' || value === '') return 'invalid_field'
-        entries.push({
-          id: typeof candidate.id === 'string' && candidate.id !== '' ? candidate.id : createId('ref-'),
-          name: bounded(name, MAX_TITLE_LENGTH),
-          value: bounded(value, MAX_LINK_LENGTH),
-        })
-      }
-      // The scan already dropped values the project holds; re-checking keeps the
-      // op idempotent when a batch carries two intakes of the same file.
-      const known = new Set(project.references.map(entry => entry.value))
-      for (const entry of entries) {
-        if (known.has(entry.value)) continue
-        known.add(entry.value)
-        let id = entry.id
-        while (findReference(project, id) !== undefined) id = createId('ref-')
-        project.references.push({
-          id,
-          kind: 'link',
-          name: entry.name,
-          value: entry.value,
-          description: '',
-          staleSince: 0,
-        })
-      }
-      return null
-    }
     case 'plan.set': {
       // A draft, not cards: it is validated here and written once, and only
       // `plan.apply` turns it into subtasks.
       if (project === undefined) return 'unknown_project'
       if (typeof op.summary !== 'string') return 'invalid_field'
-      const checked = validatePlanItems(project, op.items)
+      const checked = validatePlanItems(op.items)
       if (checked.code !== undefined) return checked.code
       project.plan = {
         id: createId('plan-'),
@@ -1815,7 +1600,6 @@ export function applyOp(board, op, origin) {
       const plan = project.plan
       if (!isRecord(plan) || !Array.isArray(plan.items) || plan.items.length === 0) return 'unknown_plan'
       const at = Date.now()
-      const knownRefs = new Set(project.references.map(entry => entry.id))
       const taken = new Set(project.tasks.map(task => task.title))
       const skippedTitles = []
       let created = 0
@@ -1832,8 +1616,6 @@ export function applyOp(board, op, origin) {
           taken.delete(item.title)
           continue
         }
-        // A reference removed since the draft was written is a dead link.
-        task.refs = task.refs.filter(ref => knownRefs.has(ref))
         project.tasks.push(task)
         created += 1
       }
@@ -1850,35 +1632,6 @@ export function applyOp(board, op, origin) {
       if (project === undefined) return 'unknown_project'
       project.plan = null
       return null
-    }
-    // Compatibility aliases: the version-9 entry operations still work, they
-    // just describe a `link` reference now, and `path` is called `value`.
-    case 'sharedEntry.add': {
-      return addReference(project, {
-        id: op.id,
-        kind: 'link',
-        name: op.name,
-        value: op.path === undefined ? '' : op.path,
-        description: op.description,
-      })
-    }
-    // The old name of the entry patch is `sharedEntry.patch`; the contract also
-    // spells it `sharedEntry.update`, so both are accepted. Version 9 sent the
-    // fields at the top level; a wrapped `patch` is read too, because accepting
-    // a shape whose fields would otherwise be dropped is better than a silent
-    // no-op that looks like a successful edit.
-    case 'sharedEntry.patch':
-    case 'sharedEntry.update': {
-      const source = isRecord(op.patch) ? { ...op, ...op.patch } : op
-      const patch = {}
-      if ('name' in source) patch.name = source.name
-      if ('path' in source) patch.value = source.path
-      if ('value' in source) patch.value = source.value
-      if ('description' in source) patch.description = source.description
-      return updateReference(project, { referenceId: op.entryId, patch })
-    }
-    case 'sharedEntry.remove': {
-      return removeReference(project, op.entryId)
     }
     case 'board.replace': {
       if (!isRecord(op.document)) return 'invalid_field'

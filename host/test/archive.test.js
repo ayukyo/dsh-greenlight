@@ -60,6 +60,7 @@ test('putCards restores cards and recreates a missing project', () => {
   assert.equal(fresh.projects[0].name, '恢复来的')
   assert.equal(fresh.projects[0].tasks.length, 1)
   assert.equal(fresh.projects[0].acceptanceMode, 'auto')
+  assert.equal(fresh.projects[0].materials, '', 'a recreated project starts with an empty material text')
 })
 
 test('the archive survives a restart', async () => {

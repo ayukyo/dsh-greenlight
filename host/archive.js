@@ -274,7 +274,7 @@ export function putCards(board, projectId, projectName, tasks) {
       name: projectName === '' ? '恢复的项目' : projectName,
       tasks: [],
       memory: [],
-      references: [],
+      materials: '',
       plan: null,
       trash: [],
       acceptanceMode: 'auto',

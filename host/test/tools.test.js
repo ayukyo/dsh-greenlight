@@ -3,7 +3,7 @@
  * Run with: node --test host/test
  */
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -101,7 +101,7 @@ test('the Host half registers routes and every tool', async () => {
   assert.deepEqual(tools.map(tool => tool.name).sort(), [
     'greenlight_acceptance',
     'greenlight_archive',
-    'greenlight_intake',
+    'greenlight_materials',
     'greenlight_memory_add',
     'greenlight_overview',
     'greenlight_plan_apply',
@@ -109,7 +109,6 @@ test('the Host half registers routes and every tool', async () => {
     'greenlight_preview',
     'greenlight_project',
     'greenlight_recheck',
-    'greenlight_reference',
     'greenlight_review',
     'greenlight_session_attach',
     'greenlight_task_create',
@@ -117,6 +116,7 @@ test('the Host half registers routes and every tool', async () => {
     'greenlight_task_update',
     'greenlight_trash',
   ])
+  assert.equal(tools.length, 16, 'the surface holds sixteen tools')
   for (const tool of tools) {
     assert.equal(typeof tool.description, 'string')
     assert.equal(typeof tool.parameters, 'object')
@@ -125,7 +125,7 @@ test('the Host half registers routes and every tool', async () => {
     assert.equal(typeof tool.execute, 'function')
   }
   const diagnostics = diagnosticsState()
-  assert.equal(diagnostics.registered.length, 17)
+  assert.equal(diagnostics.registered.length, 16)
   assert.deepEqual(diagnostics.errors, [])
   assert.equal(diagnostics.serviceMissing, false)
 })
@@ -140,7 +140,7 @@ test('the diagnostics route reports the mounted surface', async () => {
   assert.equal(response.status, 200)
   assert.equal(body.ok, true)
   assert.equal(body.plugin, 'greenlight')
-  assert.equal(body.tools.registered.length, 17)
+  assert.equal(body.tools.registered.length, 16)
   assert.equal(body.boardFile, join(dir, 'board.json'))
 })
 
@@ -162,7 +162,7 @@ test('tools read and write through the same store as the routes', async () => {
   await assert.rejects(() => created.execute({ projectId: 'nope', title: 'x' }, {}), /项目不存在/)
 
   await store.mutate((draft) => {
-    draft.projects.push({ id: 'p1', name: 'Alpha', references: [], tasks: [], memory: [], createdAt: Date.now() })
+    draft.projects.push({ id: 'p1', name: 'Alpha', materials: '', tasks: [], memory: [], createdAt: Date.now() })
     return draft
   })
 
@@ -186,24 +186,16 @@ test('tools read and write through the same store as the routes', async () => {
   const entry = await memory.execute({ projectId: 'p1', text: '约定：先评审', taskId: task.taskId }, {})
   assert.ok(typeof entry.memoryId === 'string' && entry.memoryId !== '')
 
-  const reference = await toolNamed(tools, 'greenlight_reference')
-  const note = await reference.execute({
-    projectId: 'p1',
-    action: 'add',
-    kind: 'note',
-    name: '项目说明',
-    value: '先评审再实现',
-  }, {})
-  assert.match(note.id, /^ref-/)
-  assert.equal(note.references.length, 1)
+  const materials = await toolNamed(tools, 'greenlight_materials')
+  const written = await materials.execute({ projectId: 'p1', materials: 'docs/需求.md\n先评审再实现' }, {})
+  assert.equal(written.length, 'docs/需求.md\n先评审再实现'.length)
 
   const attach = await toolNamed(tools, 'greenlight_session_attach')
   const bound = await attach.execute({ projectId: 'p1', taskId: task.taskId, sessionId: 'sess-1' }, {})
   assert.equal(bound.sessionId, 'sess-1')
 
   const detail = await toolNamed(tools, 'greenlight_project').execute({ projectId: 'p1' }, {})
-  assert.equal(detail.project.references[0].kind, 'note')
-  assert.equal(detail.project.references[0].value, '先评审再实现')
+  assert.equal(detail.project.materials, 'docs/需求.md\n先评审再实现')
   assert.equal(detail.project.tasks[0].status, 'todo')
   assert.equal(detail.project.tasks[0].progress, 55)
   assert.equal(detail.project.tasks[0].sessionId, 'sess-1')
@@ -220,7 +212,7 @@ test('a tool completion is auto-accepted only when it is verifiable', async () =
     id: 'p1',
     name: 'Alpha',
     acceptanceMode: 'auto',
-    references: [],
+    materials: '',
     tasks: [],
     memory: [],
     trash: [],
@@ -272,7 +264,7 @@ test('the submit tool records evidence and settles the card', async () => {
       id: 'p1',
       name: 'Alpha',
       acceptanceMode: 'auto',
-      references: [],
+      materials: '',
       tasks: [],
       memory: [],
       trash: [],
@@ -301,7 +293,7 @@ test('a human-mode project keeps tool completions in review', async () => {
       id: 'p1',
       name: 'Alpha',
       acceptanceMode: 'human',
-      references: [],
+      materials: '',
       tasks: [],
       memory: [],
       trash: [],
@@ -324,7 +316,7 @@ test('agent tools can still record progress, notes and rejection reasons', async
   const store = await makeStore()
   const tools = createBoardTools(store)
   await store.mutate((draft) => {
-    draft.projects.push({ id: 'p1', name: 'Alpha', references: [], tasks: [], memory: [], trash: [], createdAt: Date.now() })
+    draft.projects.push({ id: 'p1', name: 'Alpha', materials: '', tasks: [], memory: [], trash: [], createdAt: Date.now() })
     return draft
   })
   const created = await toolNamed(tools, 'greenlight_task_create').execute({ projectId: 'p1', title: 'T' }, {})
@@ -348,7 +340,7 @@ test('the panel route may complete a card', async () => {
     draft.projects.push({
       id: 'p1',
       name: 'Alpha',
-      references: [],
+      materials: '',
       tasks: [{ id: 't1', title: 'T', status: 'review', progress: 90 }],
       memory: [],
       trash: [],
@@ -362,18 +354,13 @@ test('the panel route may complete a card', async () => {
   assert.equal(board.projects[0].tasks[0].status, 'done')
 })
 
-test('tools can set priority, due date, tags and refs', async () => {
+test('tools can set priority, due date and tags', async () => {
   const store = await makeStore()
   const tools = createBoardTools(store)
   await store.mutate((draft) => {
-    draft.projects.push({ id: 'p1', name: 'Alpha', references: [], tasks: [], memory: [], trash: [], createdAt: Date.now() })
+    draft.projects.push({ id: 'p1', name: 'Alpha', materials: '', tasks: [], memory: [], trash: [], createdAt: Date.now() })
     return draft
   })
-  const entry = await toolNamed(tools, 'greenlight_reference').execute(
-    { projectId: 'p1', action: 'add', kind: 'link', name: '接口文档', value: 'docs/api.md' },
-    {},
-  )
-  const referenceId = entry.id
 
   const created = await toolNamed(tools, 'greenlight_task_create').execute({ projectId: 'p1', title: 'T' }, {})
   await toolNamed(tools, 'greenlight_task_update').execute({
@@ -382,50 +369,46 @@ test('tools can set priority, due date, tags and refs', async () => {
     priority: 'high',
     dueDate: '2026-12-31',
     tags: ['后端', '联调'],
-    refs: [referenceId],
   }, {})
 
   const task = store.snapshot().projects[0].tasks[0]
   assert.equal(task.priority, 'high')
   assert.equal(task.dueDate, '2026-12-31')
   assert.deepEqual(task.tags, ['后端', '联调'])
-  assert.deepEqual(task.refs, [referenceId])
 })
 
-test('the reference tool lists, updates and removes entries', async () => {
+test('the material tool writes, replaces and clears the text', async () => {
   const store = await makeStore()
   const tools = createBoardTools(store)
   await store.mutate((draft) => {
-    draft.projects.push({ id: 'p1', name: 'Alpha', references: [], tasks: [], memory: [], trash: [], createdAt: Date.now() })
+    assert.equal(applyOp(draft, { type: 'project.add', id: 'p1', name: 'Alpha' }), null)
     return draft
   })
-  const tool = toolNamed(tools, 'greenlight_reference')
-  const added = await tool.execute({ projectId: 'p1', action: 'add', kind: 'link', name: 'A', value: 'a.md' }, {})
-  assert.match(added.id, /^ref-/)
-  assert.equal(added.references.length, 1)
-  assert.equal(added.references[0].kind, 'link')
-  assert.equal(added.references[0].staleSince, 0)
+  const tool = toolNamed(tools, 'greenlight_materials')
+  const written = await tool.execute({ projectId: 'p1', materials: 'docs/需求.md\n先评审再实现' }, {})
+  assert.equal(written.length, 'docs/需求.md\n先评审再实现'.length)
+  assert.equal(store.snapshot().projects[0].materials, 'docs/需求.md\n先评审再实现')
+  assert.match(tool.output.render({}, written)[0].text, /已保存项目资料/)
 
-  const listed = await tool.execute({ projectId: 'p1', action: 'list' }, {})
-  assert.equal(listed.references[0].name, 'A')
+  // One call replaces the whole block; an empty string clears it.
+  const replaced = await tool.execute({ projectId: 'p1', materials: '只有一行' }, {})
+  assert.equal(replaced.length, '只有一行'.length)
+  assert.equal(store.snapshot().projects[0].materials, '只有一行')
+  const cleared = await tool.execute({ projectId: 'p1', materials: '' }, {})
+  assert.equal(cleared.length, 0)
+  assert.equal(store.snapshot().projects[0].materials, '')
+  assert.match(tool.output.render({}, cleared)[0].text, /已清空项目资料/)
 
-  const updated = await tool.execute({ projectId: 'p1', action: 'update', id: added.id, value: 'b.md' }, {})
-  assert.equal(updated.id, added.id)
-  assert.equal(updated.references[0].value, 'b.md')
-
-  const removed = await tool.execute({ projectId: 'p1', action: 'remove', id: added.id }, {})
-  assert.equal(removed.removed, true)
-  assert.equal(removed.references.length, 0)
-  await assert.rejects(() => tool.execute({ projectId: 'p1', action: 'nope' }, {}), /action 只能是/)
-  await assert.rejects(() => tool.execute({ projectId: 'p1', action: 'add', kind: 'link', name: '无路径' }, {}), /link 需要/)
-  await assert.rejects(() => tool.execute({ projectId: 'p1', action: 'update', id: 'ref-gone', name: 'x' }, {}), /资料不存在/)
+  await assert.rejects(() => tool.execute({ projectId: 'p1', materials: 42 }, {}), /materials 必须是字符串/)
+  await assert.rejects(() => tool.execute({ projectId: 'p1' }, {}), /materials 必须是字符串/)
+  await assert.rejects(() => tool.execute({ projectId: 'nope', materials: 'x' }, {}), /项目不存在/)
 })
 
 test('the trash tool lists and restores removed cards', async () => {
   const store = await makeStore()
   const tools = createBoardTools(store)
   await store.mutate((draft) => {
-    draft.projects.push({ id: 'p1', name: 'Alpha', references: [], tasks: [], memory: [], trash: [], createdAt: Date.now() })
+    draft.projects.push({ id: 'p1', name: 'Alpha', materials: '', tasks: [], memory: [], trash: [], createdAt: Date.now() })
     return draft
   })
   const created = await toolNamed(tools, 'greenlight_task_create').execute({ projectId: 'p1', title: '删掉的卡' }, {})
@@ -458,11 +441,7 @@ test('tool renders produce model-facing text', async () => {
     draft.projects.push({
       id: 'p1',
       name: 'Alpha',
-      references: [
-        { id: 'ref-a', kind: 'note', name: '项目说明', value: '先评审再实现', description: '', staleSince: 0 },
-        { id: 'ref-b', kind: 'link', name: '设计稿', value: 'docs/design.md', description: '首页与详情页 2 版', staleSince: 0 },
-        { id: 'ref-c', kind: 'link', name: '旧站点备份', value: 'legacy/site.zip', description: '', staleSince: 1 },
-      ],
+      materials: '- 项目说明：先评审再实现\n- 设计稿：docs/design.md（首页与详情页 2 版）',
       tasks: [],
       memory: [],
       createdAt: Date.now(),
@@ -474,63 +453,29 @@ test('tool renders produce model-facing text', async () => {
   assert.match(content[0].text, /Alpha/)
   assert.match(content[0].text, /\[p1\]/)
 
-  // The 资料 block names the kind, the value, the description and the stale
-  // mark — the shape a human reads on the card.
+  // The 资料 block is the stored text, line for line: the model reads exactly
+  // what the project holds.
   const projectTool = toolNamed(tools, 'greenlight_project')
   const projectValue = await projectTool.execute({ projectId: 'p1' }, {})
   const projectText = projectTool.output.render({}, projectValue)[0].text
   assert.ok(projectText.includes([
     '资料：',
-    '- [约定] 项目说明：先评审再实现',
-    '- [链接] 设计稿：docs/design.md（首页与详情页 2 版）',
-    '- [链接] 旧站点备份：legacy/site.zip（已失效）',
+    '- 项目说明：先评审再实现',
+    '- 设计稿：docs/design.md（首页与详情页 2 版）',
   ].join('\n')), projectText)
 })
 
-test('the intake tool scans material, defaults to a dry run, and writes when asked', async () => {
+test('the project render says 资料：空 when the text is empty', async () => {
   const store = await makeStore()
   const tools = createBoardTools(store)
-  const dir = await mkdtemp(join(tmpdir(), 'greenlight-intake-tool-'))
-  await mkdir(join(dir, 'docs'), { recursive: true })
-  await mkdir(join(dir, 'node_modules'), { recursive: true })
-  await writeFile(join(dir, 'a.md'), '# A', 'utf8')
-  await writeFile(join(dir, 'docs', 'b.md'), '# B', 'utf8')
-  await writeFile(join(dir, 'node_modules', 'x.js'), 'x', 'utf8')
   await store.mutate((draft) => {
-    assert.equal(applyOp(draft, { type: 'project.add', id: 'p1', name: 'Alpha', rootDir: dir }), null)
+    assert.equal(applyOp(draft, { type: 'project.add', id: 'p1', name: 'Alpha' }), null)
     return draft
   })
-
-  const tool = toolNamed(tools, 'greenlight_intake')
-  // dryRun defaults to true: the scan reports, the board does not change.
-  const dry = await tool.execute({ projectId: 'p1', paths: [dir] }, {})
-  assert.deepEqual(dry.added.map(entry => entry.value), ['a.md', 'docs/b.md'])
-  assert.deepEqual(dry.missing, [])
-  assert.deepEqual(dry.skipped, [])
-  assert.equal(dry.truncated, false)
-  assert.equal(store.snapshot().projects[0].references.length, 0, 'a dry run writes nothing')
-  const dryText = tool.output.render({ dryRun: true }, dry)[0].text
-  assert.match(dryText, /新增 2 条（跳过 0 条重复，0 条未找到）；仅扫描，未写入/)
-
-  const written = await tool.execute({ projectId: 'p1', paths: [dir], dryRun: false }, {})
-  assert.equal(written.added.length, 2)
-  assert.deepEqual(store.snapshot().projects[0].references.map(entry => entry.value), ['a.md', 'docs/b.md'])
-  assert.match(tool.output.render({ dryRun: false }, written)[0].text, /已写入项目资料/)
-
-  // The second write skips every value the project already holds.
-  const again = await tool.execute({ projectId: 'p1', paths: [dir], dryRun: false }, {})
-  assert.equal(again.added.length, 0)
-  assert.deepEqual(again.skipped, ['a.md', 'docs/b.md'])
-  assert.match(tool.output.render({ dryRun: false }, again)[0].text, /跳过 2 条重复/)
-
-  const missingPath = join(dir, 'nope.md')
-  const absent = await tool.execute({ projectId: 'p1', paths: [missingPath], dryRun: false }, {})
-  assert.deepEqual(absent.missing, [missingPath])
-  assert.match(tool.output.render({ dryRun: false }, absent)[0].text, /1 条未找到/)
-
-  await assert.rejects(() => tool.execute({ projectId: 'p1', paths: [] }, {}), /至少要给一个/)
-  await assert.rejects(() => tool.execute({ projectId: 'p1' }, {}), /至少要给一个/)
-  await assert.rejects(() => tool.execute({ projectId: 'nope', paths: [dir] }, {}), /项目不存在/)
+  const projectTool = toolNamed(tools, 'greenlight_project')
+  const value = await projectTool.execute({ projectId: 'p1' }, {})
+  assert.equal(value.project.materials, '')
+  assert.match(projectTool.output.render({}, value)[0].text, /资料：空/)
 })
 
 test('the plan tools write a draft, show it on the project, and apply it to cards', async () => {
@@ -538,7 +483,6 @@ test('the plan tools write a draft, show it on the project, and apply it to card
   const tools = createBoardTools(store)
   await store.mutate((draft) => {
     assert.equal(applyOp(draft, { type: 'project.add', id: 'p1', name: 'Alpha' }), null)
-    assert.equal(applyOp(draft, { type: 'reference.add', projectId: 'p1', id: 'ref-doc', kind: 'link', name: '设计稿', value: 'docs/design.md' }), null)
     return draft
   })
   // A card that shares a title with the draft must not be duplicated.
@@ -549,7 +493,7 @@ test('the plan tools write a draft, show it on the project, and apply it to card
     projectId: 'p1',
     summary: '把旧静态站迁到新构建链路',
     items: [
-      { title: '整理目录结构', note: '输出目录树', priority: 'high', tags: ['docs'], refs: ['ref-doc'] },
+      { title: '整理目录结构', note: '输出目录树', priority: 'high', tags: ['docs'] },
       { title: '迁移构建脚本' },
       { title: '首页性能优化', deliverables: ['docs/lighthouse.md'] },
     ],
@@ -588,7 +532,6 @@ test('the plan tools write a draft, show it on the project, and apply it to card
   assert.equal(carried.note, '输出目录树')
   assert.equal(carried.priority, 'high')
   assert.deepEqual(carried.tags, ['docs'])
-  assert.deepEqual(carried.refs, ['ref-doc'])
   assert.equal(after.tasks.some(task => task.id === created.taskId), true, 'the existing card is untouched')
 
   // Once the draft is gone the section disappears from the detail tool.

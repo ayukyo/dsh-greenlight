@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented here.
 
+## 0.4.0
+
+**项目资料简化成一个文本框**
+- 「项目资料」现在就是一个多行文本框：文档路径、约定、链接都写在这一段里，**输入即保存**
+  （本地立即生效，600ms 防抖后写 Host，连续输入只发一次）
+- 删除：资料条目列表、`链接/约定/其它` 三种类型、行内编辑、「扫描材料」、失效标记、
+  卡片上的「引用资料」chips、`greenlight_reference` 与 `greenlight_intake` 两个工具
+- 新增 `greenlight_materials`：agent 直接写整段资料文本
+- 工具 17 → **16**
+
+**数据**
+- 数据版本 11 → **12**：`project.materials` 为一段文本；`project.references`、`task.refs`、
+  `plan.items[].refs` 移除
+- 旧文档（v9/v10/v11）读取时把条目合并成文本行，不丢内容；已有非空文本则保持原样
+
 ## 0.3.0
 
 **从材料开工**

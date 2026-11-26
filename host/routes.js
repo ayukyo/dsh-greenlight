@@ -298,8 +298,8 @@ export function createBoardRoutes(store, options) {
       let stale = null
       let rejected = []
       // Per-operation results: operations whose contract states an outcome (a
-      // material scan, a draft landing as cards) report it here, so the panel can
-      // show what happened without guessing from the board diff.
+      // draft landing as cards) report it here, so the panel can show what
+      // happened without guessing from the board diff.
       let results = []
       let committed
       try {
@@ -320,8 +320,8 @@ export function createBoardRoutes(store, options) {
           let changed = false
           // A completion claim carrying deliverables is checked against the
           // filesystem before the board layer decides where the card lands; a
-          // material intake is scanned there for the same reason. Indices are
-          // kept so a result can point back at the operation the caller sent.
+          // recheck sweeps the same files. Indices are kept so a result can point
+          // back at the operation the caller sent.
           const boardOps = []
           const boardIndexes = []
           payload.ops.forEach((op, index) => {
@@ -339,12 +339,7 @@ export function createBoardRoutes(store, options) {
             if (op === null || typeof op !== 'object') return
             const applied = prepared[position]
             const result = { index: boardIndexes[position], type: op.type }
-            if (op.type === 'reference.intake' && Array.isArray(applied.added)) {
-              result.added = applied.added
-              result.missing = Array.isArray(applied.missing) ? applied.missing : []
-              result.skipped = Array.isArray(applied.skipped) ? applied.skipped : []
-              result.truncated = applied.truncated === true
-            } else if (op.type === 'plan.apply' && applied.result !== undefined) {
+            if (op.type === 'plan.apply' && applied.result !== undefined) {
               result.created = applied.result.created
               result.skippedTitles = applied.result.skippedTitles
             } else {

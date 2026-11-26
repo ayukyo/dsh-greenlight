@@ -11,7 +11,7 @@
  * change made from a conversation and a change made in the panel cannot take
  * different paths.
  */
-import { applyOps, boardCounts, createId, findProject, findTask, projectPercent, projectTone, statusCounts } from './board.js'
+import { applyOps, boardCounts, findProject, findTask, projectPercent, projectTone, statusCounts } from './board.js'
 import { archivedCount, isArchiveOp, putCards, takeCards } from './archive.js'
 import { prepareBatch } from './verify.js'
 
@@ -30,7 +30,6 @@ function messageFor(code) {
   switch (code) {
     case 'unknown_project': return '项目不存在（projectId 有误）'
     case 'unknown_task': return '子任务不存在（taskId 有误）'
-    case 'unknown_reference': return '资料不存在（id 有误）'
     case 'unknown_plan': return '还没有拆解草案（先用 greenlight_plan_set 写一份）'
     case 'invalid_field': return '参数不合法'
     case 'duplicate_id': return '该 id 已存在'
@@ -225,36 +224,6 @@ function acceptanceLine(value, prefix) {
 }
 
 /**
- * Render one project reference as a model-facing line: the kind badge carries
- * the distinction the model has to keep — a link is re-checked, a note is not.
- * @param reference - reference to render.
- * @returns the bullet line.
- */
-function referenceLine(reference) {
-  // Only a link is probed; "约定" and "其它" are text the Host never checks.
-  const kindLabel = reference.kind === 'link'
-    ? '链接'
-    : (reference.kind === 'note' ? '约定' : '其它')
-  const valueText = reference.value === '' ? '' : '：' + reference.value
-  // The description and the stale mark share one bracket, so a line never ends
-  // with two parentheses.
-  const marks = []
-  if (reference.description !== '') marks.push(reference.description)
-  if (reference.staleSince > 0) marks.push('已失效')
-  return '- [' + kindLabel + '] ' + reference.name + valueText
-    + (marks.length === 0 ? '' : '（' + marks.join('；') + '）')
-}
-
-/**
- * Render a list of references, one line each.
- * @param references - references to render.
- * @returns the lines joined by newlines.
- */
-function renderReferences(references) {
-  return references.map(referenceLine).join('\n')
-}
-
-/**
  * Build the tool definitions for one store.
  * @param store - board store.
  * @returns tool definitions ready for `ctx.tools.register`.
@@ -322,7 +291,7 @@ export function createBoardTools(store, options) {
     },
     {
       name: 'greenlight_project',
-      description: 'Read one project: its references (links and convention notes), its draft breakdown when one exists, its subtasks (bounded), and its recent memory entries.',
+      description: 'Read one project: its material text (document paths, conventions and links), its draft breakdown when one exists, its subtasks (bounded), and its recent memory entries.',
       parameters: {
         type: 'object',
         required: ['projectId'],
@@ -339,14 +308,14 @@ export function createBoardTools(store, options) {
           properties: {
             project: {
               type: 'object',
-              required: ['id', 'name', 'references', 'tasks', 'memory'],
+              required: ['id', 'name', 'materials', 'tasks', 'memory'],
               additionalProperties: false,
               properties: {
                 id: { type: 'string' },
                 name: { type: 'string' },
                 percent: { type: 'number' },
                 tone: { type: 'string' },
-                references: { type: 'array', items: { type: 'object', additionalProperties: true } },
+                materials: { type: 'string' },
                 plan: { type: 'object', additionalProperties: true },
                 tasks: { type: 'array', items: { type: 'object', additionalProperties: true } },
                 memory: { type: 'array', items: { type: 'object', additionalProperties: true } },
@@ -358,9 +327,9 @@ export function createBoardTools(store, options) {
         render: (_args, value) => {
           const project = value.project
           const head = '项目「' + project.name + '」 ' + project.percent + '%（' + project.tasks.length + ' 个子任务）'
-          const references = project.references.length === 0
-            ? '资料：空'
-            : '资料：\n' + renderReferences(project.references)
+          // The material is one free-text block: it is shown as the user wrote it,
+          // line for line, so the model reads exactly what the project holds.
+          const materials = project.materials === '' ? '资料：空' : '资料：\n' + project.materials
           // The draft sits between material and cards, where a human confirms it.
           const plan = project.plan === null || project.plan === undefined
             ? null
@@ -376,7 +345,7 @@ export function createBoardTools(store, options) {
           const memory = project.memory.length === 0
             ? '项目记忆：无'
             : '项目记忆：\n' + project.memory.map(entry => '- ' + entry.text).join('\n')
-          const blocks = [head, references, plan, tasks, memory].filter(block => block !== null)
+          const blocks = [head, materials, plan, tasks, memory].filter(block => block !== null)
           return [{ type: 'text', text: blocks.join('\n\n') }]
         },
       },
@@ -410,14 +379,7 @@ export function createBoardTools(store, options) {
             acceptanceMode: project.acceptanceMode,
             acceptanceRules: project.acceptanceRules,
             rootDir: project.rootDir,
-            references: project.references.map(entry => ({
-              id: entry.id,
-              kind: entry.kind,
-              name: entry.name,
-              value: entry.value,
-              description: entry.description,
-              staleSince: entry.staleSince,
-            })),
+            materials: project.materials,
             plan: project.plan,
             tasks,
             memory,
@@ -493,11 +455,6 @@ export function createBoardTools(store, options) {
           priority: { type: 'string', enum: ['low', 'normal', 'high', 'urgent'] },
           dueDate: { type: 'string', description: 'YYYY-MM-DD, or an empty string to clear' },
           tags: { type: 'array', items: { type: 'string' }, description: 'Replaces the tag list' },
-          refs: {
-            type: 'array',
-            items: { type: 'string' },
-            description: 'Ids of the project references this subtask points at',
-          },
         },
       },
       output: {
@@ -543,11 +500,9 @@ export function createBoardTools(store, options) {
         const priority = optionalString(args, 'priority')
         const dueDate = optionalString(args, 'dueDate')
         const tags = optionalStringArray(args, 'tags')
-        const refs = optionalStringArray(args, 'refs')
         if (priority !== undefined) patch.priority = priority
         if (dueDate !== undefined) patch.dueDate = dueDate
         if (tags !== undefined) patch.tags = tags
-        if (refs !== undefined) patch.refs = refs
         if (Object.keys(patch).length === 0) throw new Error('至少要给出一个要修改的字段')
         await store.init()
         await apply({ type: 'task.patch', projectId, taskId, patch })
@@ -747,7 +702,7 @@ export function createBoardTools(store, options) {
     },
     {
       name: 'greenlight_recheck',
-      description: 'Re-check every declared path in a project: link references that no longer resolve are marked stale, and card deliverables are probed again. Notes are never probed. Read-only on the project files; only board flags change.',
+      description: 'Re-check a project: its cards\' declared deliverables are probed again, so a file that disappeared is reported. Read-only on the project files; only the verification verdict changes.',
       parameters: {
         type: 'object',
         required: ['projectId'],
@@ -757,18 +712,17 @@ export function createBoardTools(store, options) {
       output: {
         schema: {
           type: 'object',
-          required: ['staleEntries', 'missingDeliverables'],
+          required: ['missingDeliverables'],
           additionalProperties: false,
           properties: {
-            staleEntries: { type: 'array', items: { type: 'string' } },
             missingDeliverables: { type: 'array', items: { type: 'string' } },
           },
         },
         render: (_args, value) => [{
           type: 'text',
-          text: value.staleEntries.length === 0 && value.missingDeliverables.length === 0
-            ? '复查完成：所有引用与交付物都能定位'
-            : '复查完成：' + value.staleEntries.length + ' 个失效引用，' + value.missingDeliverables.length + ' 张卡片交付物缺失',
+          text: value.missingDeliverables.length === 0
+            ? '复查完成：所有交付物都能定位'
+            : '复查完成：' + value.missingDeliverables.length + ' 张卡片交付物缺失',
         }],
       },
       async execute(args) {
@@ -778,14 +732,13 @@ export function createBoardTools(store, options) {
         if (project === undefined) throw new Error(messageFor('unknown_project'))
         await apply({ type: 'project.recheck', projectId })
         const after = findProject(store.snapshot(), projectId)
-        const staleEntries = after.references.filter(entry => entry.staleSince > 0).map(entry => entry.name)
         const missingDeliverables = []
         for (const task of after.tasks) {
           if (task.verification !== null && (task.verification.missing.length > 0 || task.verification.unresolved.length > 0)) {
             missingDeliverables.push(task.title)
           }
         }
-        return { staleEntries, missingDeliverables }
+        return { missingDeliverables }
       },
     },
     {
@@ -997,161 +950,43 @@ export function createBoardTools(store, options) {
       },
     },
     {
-      name: 'greenlight_reference',
-      description: 'Manage the references of one project: a single list holding three kinds. "link" is a path or URL — the Host re-checks it on every sweep, so a target that cannot be found is marked stale, and a card may point at it through refs. "note" is convention text for the project: it is never re-checked and never goes stale. "other" is anything that fits neither (an external system, a verbal agreement): free text, also never re-checked. Actions: list, add, update, remove.',
+      name: 'greenlight_materials',
+      description: 'Write the shared material text of one project: the document paths, conventions and links of the project are all written in this one free-text block (文档路径、约定、链接都写在这里). Write the whole block in one call, the way the human reads it — it replaces what was stored, and an empty string clears it. Text longer than 20000 characters is cut.',
       parameters: {
         type: 'object',
-        required: ['projectId', 'action'],
+        required: ['projectId', 'materials'],
         additionalProperties: false,
         properties: {
-          projectId: { type: 'string' },
-          action: { type: 'string', enum: ['list', 'add', 'update', 'remove'] },
-          id: { type: 'string', description: 'Reference id: required for update and remove, optional for add' },
-          kind: { type: 'string', enum: ['link', 'note', 'other'], description: 'Required when adding: link is re-checked, note and other are never' },
-          name: { type: 'string', description: 'Display name; required when adding' },
-          value: { type: 'string', description: 'link: a path or URL; note: the convention text' },
-          description: { type: 'string' },
+          projectId: { type: 'string', description: 'Project id from greenlight_overview' },
+          materials: {
+            type: 'string',
+            description: 'The whole material text: one line per document path, convention or link',
+          },
         },
       },
       output: {
         schema: {
           type: 'object',
-          required: ['action', 'references'],
+          required: ['length'],
           additionalProperties: false,
-          properties: {
-            action: { type: 'string' },
-            references: { type: 'array', items: { type: 'object', additionalProperties: true } },
-            id: { type: 'string' },
-            removed: { type: 'boolean' },
-          },
+          properties: { length: { type: 'number' } },
         },
         render: (_args, value) => [{
           type: 'text',
-          text: value.action === 'list'
-            ? (value.references.length === 0
-              ? '该项目没有资料条目。'
-              : '项目资料（' + value.references.length + '）：\n' + renderReferences(value.references))
-            : (value.action === 'add' ? '已添加资料 ' : value.action === 'update' ? '已更新资料 ' : '已删除资料 ') + value.id,
+          text: value.length === 0
+            ? '已清空项目资料'
+            : '已保存项目资料（' + value.length + ' 字）',
         }],
       },
       async execute(args) {
         const projectId = requireString(args, 'projectId')
-        const action = requireString(args, 'action')
-        await store.init()
-        const project = findProject(store.snapshot(), projectId)
-        if (project === undefined) throw new Error(messageFor('unknown_project'))
-
-        if (action === 'list') return { action, references: project.references.slice() }
-        if (action === 'add') {
-          const kind = optionalString(args, 'kind')
-          if (kind === undefined) throw new Error('add 需要 kind（link / note / other）')
-          if (kind !== 'link' && kind !== 'note' && kind !== 'other') throw new Error('kind 只能是 link / note / other')
-          const name = requireString(args, 'name')
-          const value = optionalString(args, 'value')
-          if (kind === 'link' && (value === undefined || value.trim() === '')) {
-            throw new Error('link 需要非空的 value（路径或 URL）')
-          }
-          const description = optionalString(args, 'description')
-          const given = optionalString(args, 'id')
-          const id = given === undefined || given === '' ? createId('ref-') : given
-          const op = { type: 'reference.add', projectId, id, kind, name, value: value === undefined ? '' : value }
-          if (description !== undefined) op.description = description
-          await apply(op)
-          return { action, id, references: findProject(store.snapshot(), projectId).references }
-        }
-        if (action === 'update') {
-          const id = requireString(args, 'id')
-          const patch = {}
-          const kind = optionalString(args, 'kind')
-          const name = optionalString(args, 'name')
-          const value = optionalString(args, 'value')
-          const description = optionalString(args, 'description')
-          if (kind !== undefined) patch.kind = kind
-          if (name !== undefined) patch.name = name
-          if (value !== undefined) patch.value = value
-          if (description !== undefined) patch.description = description
-          if (Object.keys(patch).length === 0) throw new Error('至少要给出一个要修改的字段')
-          await apply({ type: 'reference.update', projectId, referenceId: id, patch })
-          return { action, id, references: findProject(store.snapshot(), projectId).references }
-        }
-        if (action === 'remove') {
-          const id = requireString(args, 'id')
-          await apply({ type: 'reference.remove', projectId, referenceId: id })
-          return { action, id, references: findProject(store.snapshot(), projectId).references, removed: true }
-        }
-        throw new Error('action 只能是 list / add / update / remove')
-      },
-    },
-    {
-      name: 'greenlight_intake',
-      description: 'Scan local paths and links into project material. Directories are expanded recursively, skipping dependency and build directories (.git, node_modules, dist, build, out, target, coverage, .next, vendor, __pycache__); each file becomes one link reference whose value is the path relative to the project root (absolute when the project has no root directory). dryRun defaults to true: it only reports what would be added and writes nothing.',
-      parameters: {
-        type: 'object',
-        required: ['projectId', 'paths'],
-        additionalProperties: false,
-        properties: {
-          projectId: { type: 'string' },
-          paths: {
-            type: 'array',
-            items: { type: 'string' },
-            description: 'Local paths (files or directories) or http(s) links; at least one',
-          },
-          dryRun: { type: 'boolean', description: 'Defaults to true: scan and report only, without writing' },
-        },
-      },
-      output: {
-        schema: {
-          type: 'object',
-          required: ['added', 'missing', 'skipped', 'truncated'],
-          additionalProperties: false,
-          properties: {
-            added: { type: 'array', items: { type: 'object', additionalProperties: true } },
-            missing: { type: 'array', items: { type: 'string' } },
-            skipped: { type: 'array', items: { type: 'string' } },
-            truncated: { type: 'boolean' },
-          },
-        },
-        render: (args, value) => {
-          // dryRun is on unless the caller said otherwise, which is also what the
-          // data layer does; the report says which one happened.
-          const written = args !== null && args !== undefined && args.dryRun === false
-          const lines = ['材料扫描：新增 ' + value.added.length + ' 条'
-            + '（跳过 ' + value.skipped.length + ' 条重复，' + value.missing.length + ' 条未找到）'
-            + (written ? '；已写入项目资料' : '；仅扫描，未写入')]
-          if (value.truncated) lines.push('注意：目录内文件过多，已按每个目录最多 200 个文件截断。')
-          for (const entry of value.added) lines.push('- ' + entry.name + '：' + entry.value)
-          if (value.missing.length > 0) lines.push('未找到：' + value.missing.join('、'))
-          return [{ type: 'text', text: lines.join('\n') }]
-        },
-      },
-      async execute(args) {
-        const projectId = requireString(args, 'projectId')
-        const paths = optionalStringArray(args, 'paths')
-        if (paths === undefined || paths.length === 0) throw new Error('参数 paths 至少要给一个本地路径或链接')
-        if (paths.some(path => path.trim() === '')) throw new Error('参数 paths 里不能有空路径')
-        const write = optionalBoolean(args, 'dryRun') === false
+        const materials = optionalString(args, 'materials')
+        if (materials === undefined) throw new Error('参数 materials 必须是字符串')
         await store.init()
         if (findProject(store.snapshot(), projectId) === undefined) throw new Error(messageFor('unknown_project'))
-        // The scan needs the disk, so it happens in the prepare phase; only the
-        // ledger write goes through the board layer.
-        const prepared = (await prepareBatch(store.snapshot(), [{ type: 'reference.intake', projectId, paths }]))[0]
-        const scan = {
-          added: Array.isArray(prepared.added) ? prepared.added : [],
-          missing: Array.isArray(prepared.missing) ? prepared.missing : [],
-          skipped: Array.isArray(prepared.skipped) ? prepared.skipped : [],
-          truncated: prepared.truncated === true,
-        }
-        if (!write) return scan
-        await apply(prepared)
-        // The ledger drops an entry that turned out to be a duplicate, so the
-        // report is read back from the board rather than trusted from the scan.
-        const project = findProject(store.snapshot(), projectId)
-        const values = new Set(project.references.map(entry => entry.value))
-        const added = scan.added.filter(entry => values.has(entry.value))
-        const skipped = scan.skipped.concat(
-          scan.added.filter(entry => !values.has(entry.value)).map(entry => entry.value),
-        )
-        return { added, missing: scan.missing, skipped, truncated: scan.truncated }
+        await apply({ type: 'project.setMaterials', projectId, materials })
+        // The stored length is read back: a too-long text was cut by the board layer.
+        return { length: findProject(store.snapshot(), projectId).materials.length }
       },
     },
     {
@@ -1176,7 +1011,6 @@ export function createBoardTools(store, options) {
                 note: { type: 'string', description: 'Optional longer description' },
                 priority: { type: 'string', enum: ['low', 'normal', 'high', 'urgent'] },
                 tags: { type: 'array', items: { type: 'string' } },
-                refs: { type: 'array', items: { type: 'string' }, description: 'Ids of existing project references' },
                 deliverables: { type: 'array', items: { type: 'string' } },
               },
             },

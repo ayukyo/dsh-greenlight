@@ -15,11 +15,13 @@ projects and subtasks, each subtask can own a main Session, and when an agent su
 the `greenlight_*` tools it reports **a completion note, verification claims and deliverables** —
 the Host decides whether the card may close.
 
-<img alt="Greenlight board: the project-rail toggle beside the title, the project summary with acceptance rules, and the typed references list" src="docs/board.png" width="900">
+<img alt="Greenlight board: the project-rail toggle beside the title, the project summary with acceptance rules, and the multi-line materials block" src="docs/board.png" width="900">
 
-<img alt="The same page further down: the archive and six task columns, with card reference chips drawn from the project references" src="docs/columns.png" width="900">
+<img alt="The same page further down: the archive and six task columns" src="docs/columns.png" width="900">
 
 <img alt="A draft plan from the agent: three proposed cards with notes, and the create / edit / discard controls" src="docs/draft.png" width="900">
+
+<img alt="Project materials are one multi-line text block: doc paths, API links and conventions all live here, saved as you type" src="docs/materials.png" width="900">
 
 ## Why "green light"
 
@@ -49,17 +51,17 @@ Humans stop reviewing everything and start handling exceptions. That is the gree
 - **Warnings vs blockers** — small gaps surface as notes instead of dumping every card on a human
 
 **Start from materials**
-- Real work arrives as source trees, requirement docs, API docs and a few links: paste local paths
-  or links into Project references and scan — directories expand recursively with dependency and
-  build folders skipped, and every path is recorded relative to the project root
-- The agent reads the materials, then hands over a **draft plan** through `greenlight_intake` and
-  `greenlight_plan_set` (a proposal, no cards yet)
+- Real work arrives as source trees, requirement docs, API docs and a few links: they are one block
+  of text in Project materials — paste it and it saves
+- The agent reads that block, then hands over a **draft plan** through `greenlight_plan_set`
+  (a proposal, no cards yet)
 - The draft is editable (summary, titles, notes, remove or add rows); cards are created only when a
-  human presses create, and an edit keeps the refs and deliverables the agent attached
+  human presses create, and an edit keeps the deliverables and priority the agent attached
 
 **Context**
 - Projects → subtasks, each subtask bindable to one main Session, one-click dispatch
-- Per-project references (`link` entries are re-checked and go stale, `note`/`other` are text) and memory
+- Project **materials** are a single multi-line text block (doc paths, conventions and links all live
+  there, saved as you type) plus project memory
 - **Decision anchor** — requirement digest, key decisions, open risks, deviations, reused across sessions
 - **Next action** per card, reused as the opening line of a dispatch prompt
 
@@ -107,13 +109,13 @@ greenlight_task_submit {
 3. If the evidence holds and the deliverables exist, the card closes itself. Otherwise it lands in
    **待验收 / review** with the reason spelled out, and a human decides.
 
-## Agent tools (17)
+## Agent tools (16)
 
 | Tool | Purpose |
 |---|---|
 | `greenlight_overview` | Board overview: projects, counts, cards needing attention |
-| `greenlight_project` | One project: tasks, references, draft plan, acceptance rules, anchor |
-| `greenlight_intake` | **Take in materials**: scan local paths (directories expanded, dependency/build dirs skipped) and links into project references; reports only unless told to apply |
+| `greenlight_project` | One project: tasks, materials text, draft plan, acceptance rules, anchor |
+| `greenlight_materials` | Write the project **materials text** (doc paths, conventions and links all live in this one block) |
 | `greenlight_plan_set` | Write a **draft plan** (creates no cards) for a human to confirm |
 | `greenlight_plan_apply` | Turn the draft into real subtasks (duplicate titles skipped) |
 | `greenlight_task_create` | Create a card (title, description, priority, due date, tags) |
@@ -121,11 +123,10 @@ greenlight_task_submit {
 | `greenlight_task_submit` | **Deliver**: evidence + claims + deliverables, judged by the Host |
 | `greenlight_acceptance` | Read/write project acceptance mode, rules, required layers, root dir |
 | `greenlight_preview` | Dry-run operations, returns the changes, writes nothing |
-| `greenlight_recheck` | Re-probe references and deliverables, flag the stale ones |
+| `greenlight_recheck` | Re-probe deliverables, flag the ones that went missing |
 | `greenlight_review` | Record an independent review (verdict, note, author) |
 | `greenlight_archive` | Cold storage: list / archive / restore finished cards |
 | `greenlight_memory_add` | Append project memory |
-| `greenlight_reference` | Project references, three kinds: `link` (a path/URL, re-checked and linkable from cards), `note` (convention text) and `other` (free text, never re-checked); list / add / update / remove |
 | `greenlight_session_attach` | Bind a card to a main Session |
 | `greenlight_trash` | Trash: list / restore / purge |
 
