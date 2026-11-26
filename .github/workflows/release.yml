@@ -1,0 +1,53 @@
+name: publish
+
+# Publishes to npm when a version tag is pushed. Trusted Publishing (OIDC) is the
+# path npm asks for: no long-lived token, no 2FA prompt, and the provenance
+# attestation is generated for free. Configure the link once on npmjs.com:
+#   package → Settings → Trusted publishing → GitHub
+#     repository: ayukyo/dsh-greenlight
+#     workflow:   release.yml
+#     environment: (leave empty)
+#
+# Release steps:
+#   1. bump package.json version and add the CHANGELOG section
+#   2. git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z
+#   3. this workflow publishes; the tag then carries a GitHub Release created by hand
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  id-token: write # required for Trusted Publishing and provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      # Never publish a version whose tag does not match the manifest.
+      - name: Check the tag matches the package version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$version" ]; then
+            echo "tag $tag does not match package.json $version" >&2
+            exit 1
+          fi
+
+      - name: Run the host tests
+        run: npm test
+
+      - name: Run the client checks
+        run: npm run test:client
+
+      # npm >= 11.5 is needed for --provenance with Trusted Publishing.
+      - name: Publish
+        run: npm publish --access public --provenance

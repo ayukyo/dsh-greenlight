@@ -20,20 +20,39 @@ DSH 没有"第三方提交到官方目录"的入口。实测当前 profile 的 `
 
 ## 二、发布一次（每个版本）
 
+### 推荐：推 tag 由 CI 发布（Trusted Publishing，免 2FA）
+
+`.github/workflows/release.yml` 已就绪：推 `v*` tag 时校验 tag 与 `package.json` 版本一致、
+跑两套测试、然后 `npm publish --provenance`。需要在 npmjs.com 配一次链接：
+
+> package → Settings → Trusted publishing → GitHub
+> 仓库 `ayukyo/dsh-greenlight`、工作流 `release.yml`、environment 留空
+
+Trusted Publishing 走 OIDC，没有长期 token，也不需要 2FA 验证码。
+
+### 手动发布（token 方式，这次实际走的）
+
 ```powershell
-# 1) 版本与变更
-#    改 package.json 的 version，CHANGELOG.md 顶部加同版本小节
-# 2) 本地验证
 node --test "host/test/**/*.test.js"
 node test/client-checks.cjs ./client.js ./host/board.js
-# 3) 打包内容自检（确认 host/*.js 进包、测试不进包）
 npx npm pack --dry-run
-# 4) 发布（2FA 账号需要 OTP，或用 Automation token）
 npm publish --access public
-# 5) 打 tag + Release（来源=本仓库）
 git tag -a vX.Y.Z -m "Greenlight X.Y.Z"
 git push origin vX.Y.Z
 ```
+
+**这次遇到的坑（记下来免得再踩）**：
+
+1. 账号开了 2FA，普通登录态直接 `npm publish` → `E403 ... granular access token with bypass 2fa`
+2. 需要建 **Granular Access Token**（Access Tokens → Generate New Token）：
+   名称、勾 **Bypass two-factor authentication (2FA)**、
+   Permissions 选 **Read and write (publish and stage)**、Packages 选 **All packages**、
+   Expiration 默认 30 天。Token 只显示一次，用页面上的 **Copy 按钮**取，不要手抄（手抄一字之差就是 401）
+3. 首次发布会进入 npm 的**新包审核**：包页显示 “Temporary Holding Version … awaiting a staged release”，
+   `npm stage list` 看不到（那是自己的暂存区，不是审核队列）。
+   实测审核在几分钟内通过，注册表随后出现正式版本
+4. 发布后 `npm install` 若报 `ETARGET`，是本地 packument 缓存陈旧：
+   `npm install --prefer-online --cache <空目录>` 或换空 cache 即可
 
 发布后核对：
 
