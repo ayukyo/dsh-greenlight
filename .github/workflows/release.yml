@@ -49,5 +49,22 @@ jobs:
         run: npm run test:client
 
       # npm >= 11.5 is needed for --provenance with Trusted Publishing.
+      # A tag can legitimately be moved (a changelog commit lands after it, a
+      # release is re-cut). Publishing the same version twice is an error on npm,
+      # so a run that finds the version already there says so and stops green
+      # instead of leaving a red X on the tag.
+      - name: Check whether this version is already published
+        id: check
+        run: |
+          name="$(node -p "require('./package.json').name")"
+          version="$(node -p "require('./package.json').version")"
+          if npm view "${name}@${version}" version >/dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::${name}@${version} is already on npm; nothing to publish."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish
+        if: steps.check.outputs.skip != 'true'
         run: npm publish --access public --provenance
