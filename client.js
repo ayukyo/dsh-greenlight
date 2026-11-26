@@ -127,6 +127,9 @@ window.__ModuleLoader__.load({
       'references.add': '添加资料',
       'references.empty': '还没有项目资料',
       'references.delete': '删除资料',
+      'references.edit': '编辑资料',
+      'references.save': '保存',
+      'references.cancel': '取消',
       'tone.red': '异常',
       'tone.yellow': '推进中',
       'tone.green': '顺利',
@@ -337,6 +340,9 @@ window.__ModuleLoader__.load({
       'references.add': 'Add reference',
       'references.empty': 'No project references yet',
       'references.delete': 'Delete reference',
+      'references.edit': 'Edit reference',
+      'references.save': 'Save',
+      'references.cancel': 'Cancel',
       'tone.red': 'At risk',
       'tone.yellow': 'In progress',
       'tone.green': 'On track',
@@ -3614,6 +3620,10 @@ window.__ModuleLoader__.load({
 
       const sessionOptions = React.useMemo(() => sessionOptionsOf(sessionsSnapshot), [sessionsSnapshot])
       const [referenceDraft, setReferenceDraft] = React.useState({ kind: 'link', name: '', value: '', description: '' })
+      // One row at a time is edited in place: two open editors would compete for
+      // the same draft and the second save would silently win.
+      const [editingReferenceId, setEditingReferenceId] = React.useState('')
+      const [referenceEditDraft, setReferenceEditDraft] = React.useState({ kind: 'link', name: '', value: '', description: '' })
       const [filterText, setFilterText] = React.useState('')
       const [filterMode, setFilterMode] = React.useState('all')
 
@@ -3683,6 +3693,44 @@ window.__ModuleLoader__.load({
         if (kind === 'link' && value === '') return
         actions.addReference(kind, name, value, referenceDraft.description.trim())
         setReferenceDraft({ kind, name: '', value: '', description: '' })
+      }
+
+      /**
+       * Open one reference for editing, seeded with what is on screen.
+       * @param reference - the entry being edited.
+       */
+      const startReferenceEdit = (reference) => {
+        setEditingReferenceId(reference.id)
+        setReferenceEditDraft({
+          kind: reference.kind,
+          name: reference.name,
+          value: reference.value,
+          description: reference.description,
+        })
+      }
+
+      const cancelReferenceEdit = () => {
+        setEditingReferenceId('')
+        setReferenceEditDraft({ kind: 'link', name: '', value: '', description: '' })
+      }
+
+      // Same validation as the add form, for the same reason: the Host would
+      // refuse an empty name or an empty link, so the draft never leaves the page.
+      const saveReferenceEdit = (event) => {
+        event.preventDefault()
+        if (editingReferenceId === '') return
+        const kind = referenceEditDraft.kind === 'note' ? 'note' : 'link'
+        const name = referenceEditDraft.name.trim()
+        const value = kind === 'link' ? referenceEditDraft.value.trim() : referenceEditDraft.value
+        if (name === '') return
+        if (kind === 'link' && value === '') return
+        actions.updateReference(editingReferenceId, {
+          kind,
+          name,
+          value,
+          description: referenceEditDraft.description.trim(),
+        })
+        cancelReferenceEdit()
       }
 
       const createSession = (taskId) => {
@@ -3922,23 +3970,80 @@ window.__ModuleLoader__.load({
             ? h('p', { className: 'dsh-board__empty' }, t('references.empty'))
             : h('div', { className: 'dsh-board__memoryList' },
               project.references.map(reference => h('div', { key: reference.id, className: 'dsh-board__memoryItem' },
-                h('span', { className: 'dsh-board__chip' },
-                  reference.kind === 'note' ? t('references.kindNote') : t('references.kindLink')),
-                h('span', { className: 'dsh-board__memoryText' },
-                  reference.value === '' ? reference.name : reference.name + '：' + reference.value),
-                reference.description === ''
-                  ? null
-                  : h('span', { className: 'dsh-board__sectionHint' }, reference.description),
-                reference.kind === 'link' && reference.staleSince > 0
-                  ? h('span', { className: 'dsh-board__badge', 'data-tone': 'warn' }, t('task.staleRef'))
-                  : null,
-                h('button', {
-                  type: 'button',
-                  className: 'dsh-board__delete',
-                  'aria-label': t('references.delete'),
-                  title: t('references.delete'),
-                  onClick: () => { actions.removeReference(reference.id) },
-                }, '\u00d7')))),
+                editingReferenceId === reference.id
+                  ? h('form', { className: 'dsh-board__form', onSubmit: saveReferenceEdit },
+                    h('select', {
+                      className: 'dsh-board__select dsh-board__select--compact',
+                      value: referenceEditDraft.kind,
+                      'aria-label': t('references.kind'),
+                      title: t('references.kind'),
+                      onChange: (event) => { setReferenceEditDraft({ ...referenceEditDraft, kind: event.target.value }) },
+                    },
+                    h('option', { value: 'link' }, t('references.kindLink')),
+                    h('option', { value: 'note' }, t('references.kindNote'))),
+                    h('input', {
+                      className: 'dsh-board__input dsh-board__input--compact',
+                      type: 'text',
+                      value: referenceEditDraft.name,
+                      placeholder: t('references.name'),
+                      'aria-label': t('references.name'),
+                      onChange: (event) => { setReferenceEditDraft({ ...referenceEditDraft, name: event.target.value }) },
+                    }),
+                    referenceEditDraft.kind === 'note'
+                      ? h('textarea', {
+                        className: 'dsh-board__shared',
+                        rows: 3,
+                        value: referenceEditDraft.value,
+                        placeholder: t('references.noteValue'),
+                        'aria-label': t('references.noteValue'),
+                        onChange: (event) => { setReferenceEditDraft({ ...referenceEditDraft, value: event.target.value }) },
+                      })
+                      : h('input', {
+                        className: 'dsh-board__input dsh-board__input--compact',
+                        type: 'text',
+                        value: referenceEditDraft.value,
+                        placeholder: t('references.linkValue'),
+                        'aria-label': t('references.linkValue'),
+                        onChange: (event) => { setReferenceEditDraft({ ...referenceEditDraft, value: event.target.value }) },
+                      }),
+                    h('input', {
+                      className: 'dsh-board__input dsh-board__input--compact',
+                      type: 'text',
+                      value: referenceEditDraft.description,
+                      placeholder: t('references.description'),
+                      'aria-label': t('references.description'),
+                      onChange: (event) => { setReferenceEditDraft({ ...referenceEditDraft, description: event.target.value }) },
+                    }),
+                    h('button', { type: 'submit', className: 'dsh-board__ghost' }, t('references.save')),
+                    h('button', { type: 'button', className: 'dsh-board__ghost', onClick: cancelReferenceEdit }, t('references.cancel')))
+                  : [
+                    h('span', { key: 'chip', className: 'dsh-board__chip' },
+                      reference.kind === 'note' ? t('references.kindNote') : t('references.kindLink')),
+                    h('span', { key: 'text', className: 'dsh-board__memoryText' },
+                      reference.value === '' ? reference.name : reference.name + '：' + reference.value),
+                    reference.description === ''
+                      ? null
+                      : h('span', { key: 'desc', className: 'dsh-board__sectionHint' }, reference.description),
+                    reference.kind === 'link' && reference.staleSince > 0
+                      ? h('span', { key: 'stale', className: 'dsh-board__badge', 'data-tone': 'warn' }, t('task.staleRef'))
+                      : null,
+                    h('button', {
+                      key: 'edit',
+                      type: 'button',
+                      className: 'dsh-board__delete',
+                      'aria-label': t('references.edit'),
+                      title: t('references.edit'),
+                      onClick: () => { startReferenceEdit(reference) },
+                    }, '\u270e'),
+                    h('button', {
+                      key: 'delete',
+                      type: 'button',
+                      className: 'dsh-board__delete',
+                      'aria-label': t('references.delete'),
+                      title: t('references.delete'),
+                      onClick: () => { actions.removeReference(reference.id) },
+                    }, '\u00d7'),
+                  ]))),
           h('button', {
             type: 'button',
             className: 'dsh-board__ghost',

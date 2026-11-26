@@ -712,25 +712,33 @@ const fakeCtx = {
   check('reference rows carry values and descriptions', textOf().includes('docs/api.md') && textOf().includes('接口约定') && textOf().includes('先评审再实现'), textOf().slice(0, 240))
   check('a reference row has a delete control', byAria('删除资料') !== null)
 
-  // The contract's row layout has no separate edit control, but the action
-  // surface still owns `updateReference`; drive it through the props the page
-  // hands the detail pane so the reference.update op is proven against the
-  // real Host rather than just declared.
-  const detailPane = findElement(element => element.props !== undefined
-    && element.props.project !== undefined
-    && element.props.actions !== undefined
-    && typeof element.props.actions.updateReference === 'function')
-  check('the detail pane exposes updateReference', !!detailPane)
+  // Inline editing: the row turns into a form, saves through reference.update,
+  // and a cancel leaves the entry exactly as it was.
+  const referenceRows = () => byClassName('dsh-board__memoryItem')
+  const rowWith = (label) => findIn(referenceRows()[0], element => element.props !== undefined && element.props['aria-label'] === label)
   const linkReferenceId = stored().projects[0].references[0].id
-  if (detailPane !== null) {
-    detailPane.props.actions.updateReference(linkReferenceId, { name: '接口文档（二版）', description: '更新后的说明' })
-  }
-  rerender()
+  check('a reference row has an edit control', rowWith('编辑资料') !== null)
+  click(rowWith('编辑资料'))
+  await settle()
+  // The add form above carries the same field labels, so the edit form is looked
+  // up inside the row instead of by label alone.
+  const editForm = findIn(referenceRows()[0], element => element.type === 'form')
+  check('editing a row opens a form', editForm !== null)
+  change(rowWith('名称'), '接口文档（二版）')
+  change(rowWith('说明（可选）'), '更新后的说明')
+  submit(findIn(referenceRows()[0], element => element.type === 'form'))
   await settle()
   const updatedReference = stored().projects[0].references[0]
-  check('updateReference merges the patch locally', updatedReference.name === '接口文档（二版）' && updatedReference.description === '更新后的说明', JSON.stringify(updatedReference))
-  check('updateReference keeps the id, kind and value', updatedReference.id === linkReferenceId && updatedReference.kind === 'link' && updatedReference.value === 'docs/api.md', JSON.stringify(updatedReference))
+  check('the edit is saved locally', updatedReference.name === '接口文档（二版）' && updatedReference.description === '更新后的说明', JSON.stringify(updatedReference))
+  check('the edit keeps the id, kind and value', updatedReference.id === linkReferenceId && updatedReference.kind === 'link' && updatedReference.value === 'docs/api.md', JSON.stringify(updatedReference))
   check('the host accepted reference.update', hostState.board.projects[0].references[0].name === '接口文档（二版）', JSON.stringify(hostState.board.projects[0].references))
+  check('a reference.update op was sent', sentOps.some(op => op.type === 'reference.update'), JSON.stringify(sentOps.map(op => op.type)))
+  click(rowWith('编辑资料'))
+  await settle()
+  change(rowWith('名称'), '不应保存')
+  click(byButtonText('取消'))
+  await settle()
+  check('cancel leaves the entry untouched', stored().projects[0].references[0].name === '接口文档（二版）', JSON.stringify(stored().projects[0].references[0]))
 
   console.log('\n[10] create a main Session for the subtask')
   const createButton = byButtonText('新建主会话')

@@ -19,6 +19,8 @@ All notable changes to this project are documented here.
 - The panel is called 绿灯看板 / Greenlight Board, with a traffic-light mark whose green lamp is lit
 - The project rail collapses from a single icon beside the title; collapsed it renders nothing at
   all, the content takes the full width, and the state is remembered per browser
+- A reference row can be edited in place (kind, name, value, description) instead of only
+  added and deleted
 
 **Fixes**
 - A batch that patched deliverables and submitted in one request probed against the document from
