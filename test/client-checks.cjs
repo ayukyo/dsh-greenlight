@@ -630,6 +630,7 @@ const fakeCtx = {
   console.log('\n[5] empty board')
   await mount()
   check('empty board shows guidance', textOf().includes('左侧还没有项目'), textOf().slice(0, 120))
+  check('the rail carries no empty-project hint', !textOf().includes('先在下面新建一个'), textOf().slice(0, 160))
   const initialMirror = stored()
   check('local mirror starts from an empty host board', initialMirror === null || initialMirror.projects.length === 0, JSON.stringify(initialMirror && initialMirror.projects.length))
 
@@ -709,6 +710,19 @@ const fakeCtx = {
   check('a note is never stale', projectRefs[1].staleSince === 0)
   check('the host stored both references', hostState.board.projects[0].references.length === 2, JSON.stringify(hostState.board.projects[0].references))
   check('rows badge their kind', byClassName('dsh-board__chip').some(chip => childText(chip) === '链接') && byClassName('dsh-board__chip').some(chip => childText(chip) === '约定'), textOf().slice(0, 240))
+
+  // The third kind: neither a file to probe nor a project convention.
+  change(byAria('类型'), 'other')
+  change(byAria('名称'), '外部审批')
+  change(byAria('约定内容'), '线下邮件确认')
+  submit(formOf(byAria('名称')))
+  await settle()
+  projectRefs = stored().projects[0].references
+  check('an other-kind reference is stored', projectRefs.length === 3 && projectRefs[2].kind === 'other', JSON.stringify(projectRefs))
+  check('an other-kind reference keeps its text', projectRefs[2].value === '线下邮件确认', JSON.stringify(projectRefs[2]))
+  check('the host stored the third kind', hostState.board.projects[0].references.some(entry => entry.kind === 'other'), JSON.stringify(hostState.board.projects[0].references))
+  check('rows badge the other kind', byClassName('dsh-board__chip').some(chip => childText(chip) === '其它'), textOf().slice(0, 240))
+  check('an other-kind row is never stale', projectRefs[2].staleSince === 0)
   check('reference rows carry values and descriptions', textOf().includes('docs/api.md') && textOf().includes('接口约定') && textOf().includes('先评审再实现'), textOf().slice(0, 240))
   check('a reference row has a delete control', byAria('删除资料') !== null)
 
@@ -816,7 +830,7 @@ const fakeCtx = {
   doc = stored()
   check('project survives', doc && doc.projects.length === 1)
   check('subtasks emptied', doc && doc.projects[0].tasks.length === 0)
-  check('references survive', doc && doc.projects[0].references.length === 2, doc && JSON.stringify(doc.projects[0].references))
+  check('references survive', doc && doc.projects[0].references.length === 3, doc && JSON.stringify(doc.projects[0].references))
   check('memory entry kept, link cleared', doc && doc.projects[0].memory.length === 1 && doc.projects[0].memory[0].taskId === '')
 
   console.log('\n[16] delete project (cancel, then confirm)')

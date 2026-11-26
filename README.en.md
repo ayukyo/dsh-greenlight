@@ -104,7 +104,7 @@ greenlight_task_submit {
 | `greenlight_review` | Record an independent review (verdict, note, author) |
 | `greenlight_archive` | Cold storage: list / archive / restore finished cards |
 | `greenlight_memory_add` | Append project memory |
-| `greenlight_reference` | Project references: `link` (a path/URL, re-checked and linkable from cards) and `note` (convention text); list / add / update / remove |
+| `greenlight_reference` | Project references, three kinds: `link` (a path/URL, re-checked and linkable from cards), `note` (convention text) and `other` (free text, never re-checked); list / add / update / remove |
 
 | `greenlight_session_attach` | Bind a card to a main Session |
 | `greenlight_trash` | Trash: list / restore / purge |

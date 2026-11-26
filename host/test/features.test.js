@@ -151,3 +151,28 @@ test('board.replace swaps the whole document', () => {
   assert.equal(applyOp(board, { type: 'board.replace', document: { projects: [] } }), 'import_empty')
   assert.equal(applyOp(board, { type: 'board.replace', document: null }), 'invalid_field')
 })
+test('the third reference kind is accepted and never goes stale', () => {
+  const board = emptyBoard()
+  applyOp(board, { type: 'project.add', id: 'p', name: 'P' })
+  assert.equal(applyOp(board, {
+    type: 'reference.add',
+    projectId: 'p',
+    id: 'r-other',
+    kind: 'other',
+    name: '外部审批',
+    value: '走线下邮件，由采购确认',
+  }), null)
+  const entry = board.projects[0].references[0]
+  assert.equal(entry.kind, 'other')
+  assert.equal(entry.value, '走线下邮件，由采购确认')
+
+  // A sweep only probes links, so text kinds stay green whatever they say.
+  applyOp(board, { type: 'project.recheck', projectId: 'p', staleEntries: ['r-other'] })
+  assert.equal(board.projects[0].references[0].staleSince, 0)
+
+  // The kind can be switched, and doing so still obeys the link rules.
+  assert.equal(applyOp(board, { type: 'reference.update', projectId: 'p', referenceId: 'r-other', patch: { kind: 'link' } }), null)
+  assert.equal(board.projects[0].references[0].kind, 'link')
+  assert.equal(applyOp(board, { type: 'reference.update', projectId: 'p', referenceId: 'r-other', patch: { value: 'docs/other.md' } }), null)
+  assert.equal(board.projects[0].references[0].value, 'docs/other.md')
+})

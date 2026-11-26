@@ -104,8 +104,7 @@ greenlight_task_submit {
 | `greenlight_review` | 记录一次独立复评（结论 + 说明 + 由谁） |
 | `greenlight_archive` | 冷存储：列出 / 归档 / 恢复已完成卡片 |
 | `greenlight_memory_add` | 追加项目记忆 |
-| `greenlight_reference` | 项目资料：link（路径/链接，会被复查、可被卡片引用）与 
-ote（约定文本）两类，列表/增/改/删 |
+| `greenlight_reference` | 项目资料三类：`link`（路径/链接，会被复查、可被卡片引用）、`note`（约定文本）、`other`（其它，自由文本，永不复查）；列表 / 增 / 改 / 删 |
 
 | `greenlight_session_attach` | 把卡片绑定到主会话 |
 | `greenlight_trash` | 回收站：列出 / 恢复 / 清空 |

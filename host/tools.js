@@ -230,7 +230,10 @@ function acceptanceLine(value, prefix) {
  * @returns the bullet line.
  */
 function referenceLine(reference) {
-  const kindLabel = reference.kind === 'note' ? '约定' : '链接'
+  // Only a link is probed; "约定" and "其它" are text the Host never checks.
+  const kindLabel = reference.kind === 'link'
+    ? '链接'
+    : (reference.kind === 'note' ? '约定' : '其它')
   const valueText = reference.value === '' ? '' : '：' + reference.value
   // The description and the stale mark share one bracket, so a line never ends
   // with two parentheses.
@@ -985,7 +988,7 @@ export function createBoardTools(store, options) {
     },
     {
       name: 'greenlight_reference',
-      description: 'Manage the references of one project: a single list holding two kinds. "link" is a path or URL — the Host re-checks it on every sweep, so a target that cannot be found is marked stale, and a card may point at it through refs. "note" is convention text for the project: it is never re-checked and never goes stale. Actions: list, add, update, remove.',
+      description: 'Manage the references of one project: a single list holding three kinds. "link" is a path or URL — the Host re-checks it on every sweep, so a target that cannot be found is marked stale, and a card may point at it through refs. "note" is convention text for the project: it is never re-checked and never goes stale. "other" is anything that fits neither (an external system, a verbal agreement): free text, also never re-checked. Actions: list, add, update, remove.',
       parameters: {
         type: 'object',
         required: ['projectId', 'action'],
@@ -994,7 +997,7 @@ export function createBoardTools(store, options) {
           projectId: { type: 'string' },
           action: { type: 'string', enum: ['list', 'add', 'update', 'remove'] },
           id: { type: 'string', description: 'Reference id: required for update and remove, optional for add' },
-          kind: { type: 'string', enum: ['link', 'note'], description: 'Required when adding: link is re-checked, note is never' },
+          kind: { type: 'string', enum: ['link', 'note', 'other'], description: 'Required when adding: link is re-checked, note and other are never' },
           name: { type: 'string', description: 'Display name; required when adding' },
           value: { type: 'string', description: 'link: a path or URL; note: the convention text' },
           description: { type: 'string' },
@@ -1031,8 +1034,8 @@ export function createBoardTools(store, options) {
         if (action === 'list') return { action, references: project.references.slice() }
         if (action === 'add') {
           const kind = optionalString(args, 'kind')
-          if (kind === undefined) throw new Error('add 需要 kind（link 或 note）')
-          if (kind !== 'link' && kind !== 'note') throw new Error('kind 只能是 link / note')
+          if (kind === undefined) throw new Error('add 需要 kind（link / note / other）')
+          if (kind !== 'link' && kind !== 'note' && kind !== 'other') throw new Error('kind 只能是 link / note / other')
           const name = requireString(args, 'name')
           const value = optionalString(args, 'value')
           if (kind === 'link' && (value === undefined || value.trim() === '')) {

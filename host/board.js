@@ -106,7 +106,7 @@ export const MAX_SHARED_LENGTH = 20000
 /** Longest accepted link value: a path or URL. */
 export const MAX_LINK_LENGTH = 1000
 /** Kinds a project reference can have. */
-export const REFERENCE_KINDS = ['link', 'note']
+export const REFERENCE_KINDS = ['link', 'note', 'other']
 /** Name the legacy `project.shared` text is carried over under. */
 const LEGACY_SHARED_NAME = '项目说明'
 /** Longest accepted note text. */

@@ -105,7 +105,6 @@ window.__ModuleLoader__.load({
       'rail.collapse': '收起项目栏',
       'rail.expand': '展开项目栏',
       'rail.countUnit': '个子任务',
-      'rail.empty': '还没有项目，先在下面新建一个。',
       'rail.new': '新建项目',
       'rail.create': '创建',
       'rail.missingName': '请先填写项目名称',
@@ -120,6 +119,7 @@ window.__ModuleLoader__.load({
       'references.kind': '类型',
       'references.kindNote': '约定',
       'references.kindLink': '链接',
+      'references.kindOther': '其它',
       'references.name': '名称',
       'references.linkValue': '路径或链接',
       'references.noteValue': '约定内容',
@@ -318,7 +318,6 @@ window.__ModuleLoader__.load({
       'rail.collapse': 'Collapse the project rail',
       'rail.expand': 'Expand the project rail',
       'rail.countUnit': 'subtasks',
-      'rail.empty': 'No projects yet. Create one below.',
       'rail.new': 'New project',
       'rail.create': 'Create',
       'rail.missingName': 'Enter a project name first',
@@ -333,6 +332,7 @@ window.__ModuleLoader__.load({
       'references.kind': 'Type',
       'references.kindNote': 'Convention',
       'references.kindLink': 'Link',
+      'references.kindOther': 'Other',
       'references.name': 'Name',
       'references.linkValue': 'Path or link',
       'references.noteValue': 'Convention text',
@@ -2178,7 +2178,7 @@ window.__ModuleLoader__.load({
       if (item === null || typeof item !== 'object') return null
       const name = typeof item.name === 'string' ? item.name.trim() : ''
       if (name === '') return null
-      const kind = item.kind === 'note' ? 'note' : 'link'
+      const kind = item.kind === 'note' ? 'note' : (item.kind === 'other' ? 'other' : 'link')
       return {
         id: typeof item.id === 'string' && item.id !== '' ? item.id : createId('ref-'),
         kind,
@@ -2761,6 +2761,21 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * The badge text for one reference kind.
+     *
+     * Three kinds share one list, so the label is resolved in one place instead of
+     * a nested ternary at each render site.
+     * @param t - translation lookup.
+     * @param kind - 'link', 'note' or 'other'.
+     * @returns the localized badge text.
+     */
+    function referenceKindLabel(t, kind) {
+      if (kind === 'link') return t('references.kindLink')
+      if (kind === 'other') return t('references.kindOther')
+      return t('references.kindNote')
+    }
+
+    /**
      * The project's color band: any blocked subtask forces red, otherwise the
      * average decides — red below 40%, yellow below 80%, green at or above it.
      * An empty project has no band.
@@ -3010,7 +3025,7 @@ window.__ModuleLoader__.load({
       if (project.references.length > 0) {
         lines.push('', '项目资料：')
         for (const reference of project.references) {
-          lines.push('- [' + (reference.kind === 'note' ? '约定' : '链接') + '] ' + reference.name + (reference.value === '' ? '' : '：' + reference.value))
+          lines.push('- [' + (reference.kind === 'link' ? '链接' : (reference.kind === 'note' ? '约定' : '其它')) + '] ' + reference.name + (reference.value === '' ? '' : '：' + reference.value))
         }
       }
       const linked = project.memory.filter(entry => entry.taskId === task.id)
@@ -3686,7 +3701,7 @@ window.__ModuleLoader__.load({
       // the same way, so the draft is only sent when it can be accepted.
       const addReference = (event) => {
         event.preventDefault()
-        const kind = referenceDraft.kind === 'note' ? 'note' : 'link'
+        const kind = referenceDraft.kind === 'link' ? 'link' : (referenceDraft.kind === 'other' ? 'other' : 'note')
         const name = referenceDraft.name.trim()
         const value = kind === 'link' ? referenceDraft.value.trim() : referenceDraft.value
         if (name === '') return
@@ -3719,7 +3734,7 @@ window.__ModuleLoader__.load({
       const saveReferenceEdit = (event) => {
         event.preventDefault()
         if (editingReferenceId === '') return
-        const kind = referenceEditDraft.kind === 'note' ? 'note' : 'link'
+        const kind = referenceEditDraft.kind === 'link' ? 'link' : (referenceEditDraft.kind === 'other' ? 'other' : 'note')
         const name = referenceEditDraft.name.trim()
         const value = kind === 'link' ? referenceEditDraft.value.trim() : referenceEditDraft.value
         if (name === '') return
@@ -3940,7 +3955,7 @@ window.__ModuleLoader__.load({
               'aria-label': t('references.name'),
               onChange: (event) => { setReferenceDraft({ ...referenceDraft, name: event.target.value }) },
             }),
-            referenceDraft.kind === 'note'
+            referenceDraft.kind !== 'link'
               ? h('textarea', {
                 className: 'dsh-board__shared',
                 rows: 3,
@@ -3989,7 +4004,7 @@ window.__ModuleLoader__.load({
                       'aria-label': t('references.name'),
                       onChange: (event) => { setReferenceEditDraft({ ...referenceEditDraft, name: event.target.value }) },
                     }),
-                    referenceEditDraft.kind === 'note'
+                    referenceEditDraft.kind !== 'link'
                       ? h('textarea', {
                         className: 'dsh-board__shared',
                         rows: 3,
@@ -4018,7 +4033,7 @@ window.__ModuleLoader__.load({
                     h('button', { type: 'button', className: 'dsh-board__ghost', onClick: cancelReferenceEdit }, t('references.cancel')))
                   : [
                     h('span', { key: 'chip', className: 'dsh-board__chip' },
-                      reference.kind === 'note' ? t('references.kindNote') : t('references.kindLink')),
+                      referenceKindLabel(t, reference.kind)),
                     h('span', { key: 'text', className: 'dsh-board__memoryText' },
                       reference.value === '' ? reference.name : reference.name + '：' + reference.value),
                     reference.description === ''
@@ -4882,9 +4897,7 @@ window.__ModuleLoader__.load({
             h('div', { className: 'dsh-board__railHead' },
               h('span', { className: 'dsh-board__railTitle' }, t('rail.title')),
               h('span', { className: 'dsh-board__railCount' }, String(projects.length))),
-            projects.length === 0
-              ? h('p', { className: 'dsh-board__empty' }, t('rail.empty'))
-              : h('div', { className: 'dsh-board__railList' },
+            h('div', { className: 'dsh-board__railList' },
                 projects.map(project => h(ProjectRow, {
                   key: project.id,
                   project,

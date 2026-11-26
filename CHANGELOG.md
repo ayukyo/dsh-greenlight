@@ -7,7 +7,9 @@ All notable changes to this project are documented here.
 **Typed references (breaking)**
 - The free-text shared body and the reference-entry list are one typed list now:
   `project.references[]` holds `link` entries (a path or URL the Host re-checks, marks stale
-  and cards can point at) and `note` entries (convention text that is never probed)
+  and cards can point at) and `note` entries (convention text that is never probed), plus a third
+  `other` kind for anything that fits neither (an external system, a verbal agreement): free text,
+  also never re-checked
 - Old documents migrate on read: `project.shared` becomes a `note` named 项目说明 at the top,
   `project.sharedEntries` becomes `link` entries that keep their ids, so card `refs` keep working
 - Tools: `greenlight_shared_set` and `greenlight_shared_entry` are replaced by
@@ -21,6 +23,7 @@ All notable changes to this project are documented here.
   all, the content takes the full width, and the state is remembered per browser
 - A reference row can be edited in place (kind, name, value, description) instead of only
   added and deleted
+- The empty project rail no longer prints a hint; the new-project field is the affordance
 
 **Fixes**
 - A batch that patched deliverables and submitted in one request probed against the document from
