@@ -1,4 +1,5 @@
 [![npm version](https://img.shields.io/npm/v/dsh-greenlight.svg)](https://www.npmjs.com/package/dsh-greenlight)
+[![npm downloads](https://img.shields.io/npm/dm/dsh-greenlight.svg)](https://www.npmjs.com/package/dsh-greenlight)
 [![license](https://img.shields.io/npm/l/dsh-greenlight.svg)](./LICENSE)
 [![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-%E2%89%A5%200.2.2--rc.3-4D6BFE)](https://github.com/deepseek-ai/deepseek-harness)
 
@@ -66,6 +67,12 @@ Humans stop reviewing everything and start handling exceptions. That is the gree
 
 ```bash
 dsh plugin --profile web add dsh-greenlight
+```
+
+Or straight from npm (the same package; enable it on the Plugins page):
+
+```bash
+npm i dsh-greenlight
 ```
 
 Restart `dsh web` and refresh. The sidebar shows **绿灯看板 / Greenlight Board**. No token, no API key,
@@ -150,11 +157,14 @@ Greenlight lets the machine judge first and shows humans only the exceptions.
 ## Development
 
 ```bash
-npm test              # host tests (93)
-npm run test:client   # client render checks (259, no browser needed)
+npm test              # host tests (95 pass, 3 socket cases skip when loopback is blocked)
+npm run test:client   # client render checks (317, no browser needed)
 ```
 
 Mount locally with `dsh plugin --profile web add "link:D:/Projects/dsh-greenlight"`.
+
+Releasing and getting listed (npm publish, the four community markets, the source
+fields): see [docs/PUBLISHING.md](./docs/PUBLISHING.md).
 
 ## License
 

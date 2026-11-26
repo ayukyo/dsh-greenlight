@@ -1,4 +1,5 @@
 [![npm version](https://img.shields.io/npm/v/dsh-greenlight.svg)](https://www.npmjs.com/package/dsh-greenlight)
+[![npm downloads](https://img.shields.io/npm/dm/dsh-greenlight.svg)](https://www.npmjs.com/package/dsh-greenlight)
 [![license](https://img.shields.io/npm/l/dsh-greenlight.svg)](./LICENSE)
 [![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-%E2%89%A5%200.2.2--rc.3-4D6BFE)](https://github.com/deepseek-ai/deepseek-harness)
 
@@ -59,6 +60,12 @@ agent 用 `greenlight_*` 工具交活时附上**完成说明 / 验证项 / 交�
 
 ```bash
 dsh plugin --profile web add dsh-greenlight
+```
+
+或者直接从 npm 装（同一个包，插件页启用后生效）：
+
+```bash
+npm i dsh-greenlight
 ```
 
 安装后**重启 `dsh web` 并刷新页面**，侧边栏出现「绿灯看板」即成功。无需 Token、无需 API Key、无需数据库。
@@ -161,8 +168,8 @@ greenlight_task_submit {
 ## 开发
 
 ```bash
-npm test          # 宿主单测（93 项）
-npm run test:client   # 客户端渲染检查（259 项，无浏览器）
+npm test          # 宿主单测（95 项通过 + 3 项 socket 用例在禁 loopback 时跳过）
+npm run test:client   # 客户端渲染检查（317 项，无浏览器）
 ```
 
 本地挂载：
@@ -172,6 +179,8 @@ dsh plugin --profile web add "link:D:/Projects/dsh-greenlight"
 ```
 
 改动客户端后刷新页面；改动宿主侧后重启 `dsh web`。
+
+发布与上架（npm 发布、四个社区市场的收录方式、来源字段）：见 [docs/PUBLISHING.md](./docs/PUBLISHING.md)。
 
 ## 兼容
 
