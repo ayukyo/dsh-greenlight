@@ -138,7 +138,7 @@ greenlight_task_submit {
 | `verifyDeliverables` | 开 | 声明的交付物必须真实存在（关掉则只当元数据） |
 | `requireSession` | 关 | 必须绑定主会话 |
 | `requireVerifiedClaim` | 关 | 至少一条带"怎么验证的"的通过项 |
-| `blockOnDebt` | 关 | 有未验证/待决策事项就转人工（agent 用 `pendingVerification` 声明） |
+| `blockOnDebt` | 开 | 有未验证/待决策事项就转人工（agent 用 `pendingVerification` 声明） |
 | `requiredLayers` | 空 | 必须覆盖的验证层级 |
 | `rootDir` | 空 | 相对交付物的解析根目录 |
 

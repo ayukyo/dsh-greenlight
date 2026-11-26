@@ -324,7 +324,7 @@ test('the acceptance tool reads and writes blockOnDebt', async () => {
   assert.equal(tool.output.schema.properties.blockOnDebt.type, 'boolean')
 
   const read = await tool.execute({ projectId: 'p1' }, {})
-  assert.equal(read.blockOnDebt, false, 'a project starts with the rule off')
+  assert.equal(read.blockOnDebt, true, 'a project starts with the rule on')
   const written = await tool.execute({ projectId: 'p1', blockOnDebt: true }, {})
   assert.equal(written.blockOnDebt, true)
   assert.equal(store.snapshot().projects[0].acceptanceRules.blockOnDebt, true)

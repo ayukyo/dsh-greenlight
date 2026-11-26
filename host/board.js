@@ -50,7 +50,7 @@ export const DEFAULT_ACCEPTANCE_RULES = {
   /** A completion must carry at least one verified claim. */
   requireVerifiedClaim: false,
   /** Open items (unverified claims, undecided questions) must be decided by a human. */
-  blockOnDebt: false,
+  blockOnDebt: true,
 }
 
 /**

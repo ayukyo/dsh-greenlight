@@ -2035,8 +2035,8 @@ console.log('\n[46] a version-11 browser mirror migrates to the materials text')
     }],
   })
   const oldRulesProject = testHelpers.parseProjects(oldRulesDoc)[0]
-  check('an old document without blockOnDebt parses it as off',
-    oldRulesProject.acceptanceRules.blockOnDebt === false,
+  check('an old document without blockOnDebt inherits the default (on)',
+    oldRulesProject.acceptanceRules.blockOnDebt === true,
     JSON.stringify(oldRulesProject.acceptanceRules))
   check('the old four rules survive the parse',
     oldRulesProject.acceptanceRules.requireEvidence === true
@@ -2053,7 +2053,8 @@ console.log('\n[46] a version-11 browser mirror migrates to the materials text')
       id: 'p-debt-rule',
       name: '未验证转人工项目',
       acceptanceMode: 'auto',
-      acceptanceRules: { requireEvidence: true, requireDeliverables: false, verifyDeliverables: true, requireSession: false },
+      // Explicitly off so the toggle can be exercised; the default is on.
+      acceptanceRules: { requireEvidence: true, requireDeliverables: false, verifyDeliverables: true, requireSession: false, blockOnDebt: false },
       rootDir: '',
       materials: '',
       memory: [],
@@ -2072,7 +2073,7 @@ console.log('\n[46] a version-11 browser mirror migrates to the materials text')
     && byAria('校验交付物文件') !== null
     && byAria('需要绑定会话') !== null,
     textOf().slice(0, 320))
-  check('an old project leaves the rule unchecked',
+  check('a project that turned the rule off shows it unchecked',
     debtSwitch !== null && debtSwitch.props.checked === false,
     debtSwitch && String(debtSwitch.props.checked))
 

@@ -417,7 +417,7 @@ test('a version-11 document migrates to v12 with an empty material text and auto
   const project = board.projects[0]
   assert.equal(project.plan, null, 'a version-11 document has no draft breakdown unless it wrote one')
   assert.equal(project.acceptanceMode, 'auto')
-  assert.equal(project.acceptanceRules.blockOnDebt, false, 'an older document leaves the new rule off')
+  assert.equal(project.acceptanceRules.blockOnDebt, true, 'an older document inherits the default, which is on')
   assert.equal(project.materials, '')
   assert.equal('references' in project, false, 'the typed list is not written back')
   const task = project.tasks[0]
@@ -840,8 +840,8 @@ test('next action and verification debt round-trip through a patch', () => {
 })
 
 test('blockOnDebt decides whether verification debt blocks automatic acceptance', () => {
-  // Off by default: an open item is only a warning, so a verifiable completion
-  // still closes the card exactly as before.
+  // The rule is on by default, so switching it off is what makes an open item a
+  // warning only: the card then closes exactly as it used to.
   const open = boardWithOneTask()
   const openProject = open.projects[0]
   const openTask = openProject.tasks[0]
@@ -849,6 +849,8 @@ test('blockOnDebt decides whether verification debt blocks automatic acceptance'
   openTask.evidence = '分析报告写完了'
   openTask.nextAction = '等真机'
   openTask.pendingVerification = ['要不要在这里修', '真机没跑']
+  assert.equal(openProject.acceptanceRules.blockOnDebt, true)
+  assert.equal(applyOp(open, { type: 'project.setAcceptance', projectId: 'p1', rules: { blockOnDebt: false } }), null)
   assert.equal(openProject.acceptanceRules.blockOnDebt, false)
   let verdict = evaluateAcceptance(openTask, openProject)
   assert.equal(verdict.pass, true, 'the default rule keeps the card auto-acceptable')

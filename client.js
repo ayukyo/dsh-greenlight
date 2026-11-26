@@ -2283,7 +2283,7 @@ window.__ModuleLoader__.load({
         requireDeliverables: typeof source.requireDeliverables === 'boolean' ? source.requireDeliverables : false,
         verifyDeliverables: typeof source.verifyDeliverables === 'boolean' ? source.verifyDeliverables : true,
         requireSession: typeof source.requireSession === 'boolean' ? source.requireSession : false,
-        blockOnDebt: typeof source.blockOnDebt === 'boolean' ? source.blockOnDebt : false,
+        blockOnDebt: typeof source.blockOnDebt === 'boolean' ? source.blockOnDebt : true,
       }
     }
 

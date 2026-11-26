@@ -139,7 +139,7 @@ greenlight_task_submit {
 | `verifyDeliverables` | on | Declared deliverables must exist on disk |
 | `requireSession` | off | The card must own a Session |
 | `requireVerifiedClaim` | off | At least one passing claim with a method |
-| `blockOnDebt` | off | Anything unverified or undecided sends the card to a human (the agent declares it through `pendingVerification`) |
+| `blockOnDebt` | on | Anything unverified or undecided sends the card to a human (the agent declares it through `pendingVerification`) |
 | `requiredLayers` | none | Verification layers the completion must cover |
 | `rootDir` | none | Base directory for relative deliverables |
 
