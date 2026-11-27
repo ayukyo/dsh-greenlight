@@ -1773,8 +1773,8 @@ const MEMORY_PAGE = 6
   flex-direction: column;
   gap: 8px;
   min-width: 0;
-  /* A column of forty cards must not stretch the page: it scrolls itself. */
-  max-height: calc(100vh - 380px);
+  /* A lane grows with its cards and the page scrolls; paging keeps a lane short
+     enough that it never needs a height cap of its own. */
   padding: 8px;
   border-radius: 12px;
   background: var(--dsw-alias-interactive-bg-hover);
@@ -1847,10 +1847,10 @@ const MEMORY_PAGE = 6
   gap: 8px;
   min-height: 36px;
   min-width: 0;
-  /* The cards scroll inside the column; the page keeps its own scroll, so the
-     wheel stops at the column boundary instead of fighting the next one. */
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  /* No scroll container of its own: a wheel over the cards drives the page, the
+     way it does everywhere else. An inner scroller that swallows the wheel until
+     it hits its own end reads as "the page is stuck". */
+  overflow: visible;
   padding-right: 2px;
 }
 .dsh-board__columnEmpty {
@@ -2146,21 +2146,6 @@ const MEMORY_PAGE = 6
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--gl-state, var(--gl-hairline)) 16%, transparent);
   padding: 8px 8px 10px;
 }
-.dsh-board__columnHead {
-  /* The head stays put while the cards scroll under it, so it needs an opaque
-     ground: the column tint is only 4% over the page, which would show the
-     cards through. base + the same state tint keeps the hue and hides them. */
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: var(--dsw-alias-bg-base);
-  backdrop-filter: blur(2px);
-  padding: 0 2px 8px;
-  border-bottom: 2px solid color-mix(in srgb, var(--gl-state, var(--gl-hairline)) 45%, transparent);
-}
-.dsh-board__column[data-status] .dsh-board__columnHead {
-  background: color-mix(in srgb, var(--gl-state) 4%, var(--dsw-alias-bg-base));
-}
 .dsh-board__columnTitle {
   color: var(--dsw-alias-label-primary);
   font-weight: 600;
@@ -2327,10 +2312,10 @@ const MEMORY_PAGE = 6
   grid-template-columns: repeat(auto-fill, minmax(460px, 1fr));
   gap: 10px;
   align-content: start;
-  /* A lane with eighty cards still scrolls itself, just generously. */
-  max-height: 62vh;
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  /* The lane grows with its cards and the page scrolls: paging (25 per lane)
+     keeps the DOM bounded, so a lane never needs a scrollbar of its own. */
+  max-height: none;
+  overflow: visible;
   padding-right: 2px;
 }
 @media (max-width: 760px) {
@@ -2363,6 +2348,11 @@ const MEMORY_PAGE = 6
 .dsh-board__taskCompact .dsh-board__taskTitle {
   display: block;
   width: 100%;
+  /* The base rule pins the title to one 26px line because it used to be an input.
+     As text it must take the height its wrapping needs, or it spills over the
+     row below it. */
+  height: auto;
+  min-height: 0;
   padding: 2px 4px;
   border-radius: 6px;
   line-height: 1.35;
@@ -2387,6 +2377,9 @@ const MEMORY_PAGE = 6
 }
 .dsh-board__taskCompact .dsh-board__taskTop {
   gap: 6px;
+  /* A title that wraps to three lines must not pull the state pill and the
+     controls onto their own vertical centres. */
+  align-items: flex-start;
 }
 .dsh-board__taskCompact .dsh-board__taskTop .dsh-board__delete {
   margin-left: auto;
@@ -3882,7 +3875,9 @@ const MEMORY_PAGE = 6
       h('span', { className: 'dsh-board__chevron', 'data-open': collapsed ? undefined : 'true', 'aria-hidden': true }, '\u203a'),
       h('span', { className: 'dsh-board__dot', 'data-tone': taskToneOf({ status, blocked: false }), 'aria-hidden': true }),
       h('span', { className: 'dsh-board__columnTitle' }, t('status.' + status)),
-      h('span', { className: 'dsh-board__count' }, String(items.length)),
+      h('span', { className: 'dsh-board__count' }, String(items.length))),
+      // The cards are siblings of the head, never its children: inside the button
+      // every click on a card would bubble up and fold the lane.
       collapsed ? null : h('div', { className: 'dsh-board__cards' },
         items.length === 0
           ? h('p', { className: 'dsh-board__columnEmpty' }, t('column.empty'))
@@ -3892,8 +3887,10 @@ const MEMORY_PAGE = 6
           : h('button', {
             type: 'button',
             className: 'dsh-board__ghost dsh-board__more',
-            onClick: () => { setShown(shown + PAGE) },
-          }, fill(t('column.more'), String(remaining))))))
+            onClick: () => {
+              setShown(shown + PAGE)
+            },
+          }, fill(t('column.more'), String(remaining)))))
     }
 
     /**

@@ -2804,15 +2804,33 @@ console.log('\n[46] a version-11 browser mirror migrates to the materials text')
       zh: dictionaries.greenlight.zh['column.more'],
       en: dictionaries.greenlight.en['column.more'],
     }))
-  check('a column caps its height instead of stretching the page',
-    source.includes('max-height: calc(100vh - 380px)'), 'column max-height missing')
-  check('the card area scrolls inside the column',
-    source.includes('overflow-y: auto') && source.includes('overscroll-behavior: contain'), 'cards scroll missing')
-  check('the column head sticks with an opaque ground',
-    source.includes('position: sticky')
-    && source.includes('backdrop-filter: blur(2px)')
-    && source.includes('color-mix(in srgb, var(--gl-state) 4%, var(--dsw-alias-bg-base))'),
-    'sticky head missing')
+  // The lane design leaves scrolling to the page: an inner scroller swallows the
+  // wheel until it reaches its own end, which reads as "the page is stuck".
+  const headRules = Array.from(source.matchAll(/\.dsh-board__columnHead \{([^}]*)\}/g)).map(match => match[1])
+  // The title is text now: it must be free to take the height its wrapping needs,
+  // or a two-line name overlaps the row below it.
+  const compactTitleRules = Array.from(source.matchAll(/\.dsh-board__taskCompact \.dsh-board__taskTitle \{([^}]*)\}/g)).map(match => match[1])
+  const compactTitle = compactTitleRules[compactTitleRules.length - 1] || ''
+  check('the title is not pinned to one fixed line height',
+    /height:\s*auto/.test(compactTitle),
+    compactTitle)
+  check('the title line keeps its controls at the top when the name wraps',
+    Array.from(source.matchAll(/\.dsh-board__taskCompact \.dsh-board__taskTop \{([^}]*)\}/g))
+      .some(match => /align-items:\s*flex-start/.test(match[1])),
+    'no align-items on the title row')
+  check('the lane head scrolls with the page instead of sticking',
+    headRules.length > 0 && headRules[headRules.length - 1].includes('position: static'),
+    headRules[headRules.length - 1])
+  const cardRules = Array.from(source.matchAll(/\.dsh-board__cards \{([^}]*)\}/g)).map(match => match[1])
+  const lastCardRule = cardRules[cardRules.length - 1] || ''
+  check('the card area leaves scrolling to the page',
+    !/overflow-y:\s*auto/.test(lastCardRule)
+    && !/max-height:\s*\d/.test(lastCardRule)
+    && !/overscroll-behavior/.test(lastCardRule),
+    lastCardRule)
+  check('no layout rule makes the card area an inner scroller',
+    !source.includes('overscroll-behavior: contain') && !source.includes('max-height: 62vh'),
+    'inner scroller rule still present')
   check('the details toggle and the chip row carry their own classes',
     source.includes('dsh-board__detailsToggle')
     && source.includes('dsh-board__chipRow')
@@ -2905,6 +2923,27 @@ console.log('\n[46] a version-11 browser mirror migrates to the materials text')
     JSON.stringify(cardTitles()) === JSON.stringify(['低优先级卡', '紧急卡', '高优先级卡']),
     JSON.stringify(cardTitles()))
 
+  // A lane head folds the lane; the cards must be its siblings, not its
+  // children, or every click inside a card would bubble up and fold the lane.
+  const laneSections = findAll(element => element.props !== undefined && element.props.className === 'dsh-board__column')
+  const laneHeadHasCards = laneSections.filter((section) => {
+    const head = findIn(section, element => element.props !== undefined
+      && typeof element.props.className === 'string'
+      && element.props.className.indexOf('dsh-board__columnHead') >= 0)
+    if (head === undefined) return false
+    return descendants(head, []).some(child => child.props !== undefined && child.props.className === 'dsh-board__task')
+  })
+  check('a lane head never wraps a card', laneHeadHasCards.length === 0,
+    'lanes with cards inside the head: ' + laneHeadHasCards.length)
+  const cardsAreSiblings = laneSections.every((section) => {
+    const kids = Array.isArray(section.props.children) ? section.props.children : [section.props.children]
+    const headIndex = kids.findIndex(kid => kid !== null && kid !== undefined && kid.props !== undefined
+      && typeof kid.props.className === 'string' && kid.props.className.indexOf('dsh-board__columnHead') >= 0)
+    const cardsIndex = kids.findIndex(kid => kid !== null && kid !== undefined && kid.props !== undefined
+      && kid.props.className === 'dsh-board__cards')
+    return headIndex >= 0 && (cardsIndex === -1 || cardsIndex > headIndex)
+  })
+  check('the card area follows the head as a sibling', cardsAreSiblings)
   // A lane head is a control now: clicking it folds the whole lane.
   const laneHead = findAll(element => element.props !== undefined
     && typeof element.props['aria-label'] === 'string'

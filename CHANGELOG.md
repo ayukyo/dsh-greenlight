@@ -2,6 +2,33 @@
 
 All notable changes to this project are documented here.
 
+## 0.4.12
+
+**修 0.4.11 的三个界面 bug**
+
+### 1. 点卡片上的任何按钮都会收起泳道
+泳道头改成 `<button>` 时，右括号写到了末尾，卡片区被包进了按钮内部（DOM 上卡片成了按钮的后代），
+点卡片里任何按钮都会冒泡到按钮的 `onClick`，触发折叠。
+现在泳道头只包自己的箭头/状态名/计数，卡片区是它的**兄弟节点**。
+
+### 2. 鼠标在子任务区滑不动
+卡片区曾自带 `max-height: 62vh` + `overflow-y: auto` + `overscroll-behavior: contain`：
+滚轮被内层盒子吞掉，滚到头又不许交给页面。
+现在卡片区 `overflow: visible`，滚轮直接驱动页面滚动；每泳道仍只渲染 25 张（翻页控制 DOM 规模）。
+同时删掉三处横排时代的死 CSS（列高上限、粘性泳道头、头部底色覆盖）。
+
+### 3. 标题与下方按钮重叠
+标题改成文本块后，旧规则里的 `height: 26px`（原输入框的单行高度）仍然生效，
+换行后的文字溢出盒子，压到下面的按钮和 chips 上。现在标题 `height: auto` 按内容撑开，
+顶行 `align-items: flex-start` 让 pill 和按钮跟首行对齐。
+
+### 新增的结构守卫测试（防止同类问题再溜过去）
+- 泳道头内部不得出现卡片，卡片区必须是泳道头的兄弟
+- 卡片区不得是内层滚动容器（无 `overflow-y: auto` / `max-height` / `overscroll-behavior`）
+- 标题规则必须有 `height: auto`，顶行必须 `align-items: flex-start`
+
+客户端 551 项、宿主 119 项测试全通过。
+
 ## 0.4.11
 
 **泳道可折叠、泳道内可排序，卡片开头不再浪费一行**
