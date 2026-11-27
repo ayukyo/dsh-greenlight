@@ -228,6 +228,7 @@ const MEMORY_PAGE = 6
       'task.archive': '归档',
       'archive.title': '归档区',
       'archive.empty': '还没有归档的卡片',
+      'archive.hint': '验收通过的卡片点标题行的「归档」移到这里；归档不删除，随时可以恢复',
       'archive.restore': '恢复',
       'archive.count': '张',
       'task.claimWhat': '验证了什么',
@@ -252,7 +253,6 @@ const MEMORY_PAGE = 6
       'task.reopen': '重新打开',
       'task.dispatch': '派给会话',
       'task.dispatching': '派发中…',
-      'task.dispatchCost': '会向该会话发送一条提示词，消耗对应额度',
       'task.dispatchNoSession': '先绑定一个主会话才能派活',
       'task.dispatchFailed': '派活失败',
       'task.dispatchDone': '已派发',
@@ -322,6 +322,8 @@ const MEMORY_PAGE = 6
       'auto.hint': '每隔 20 秒把「待办」且已绑定会话的卡片派出去',
       'task.session': '主会话',
       'task.sessionNone': '尚未绑定主会话',
+      'task.sessionGone': '会话已归档',
+      'task.sessionGoneHint': '该子会话已被归档，无法打开；请重新绑定一个会话',
       'task.createSession': '新建主会话',
       'task.creatingSession': '创建中…',
       'task.linkSession': '关联已有会话',
@@ -467,6 +469,7 @@ const MEMORY_PAGE = 6
       'task.archive': 'Archive',
       'archive.title': 'Archive',
       'archive.empty': 'Nothing archived yet',
+      'archive.hint': 'Accepted cards move here with Archive on the card; archiving deletes nothing and can be undone',
       'archive.restore': 'Restore',
       'archive.count': 'cards',
       'task.claimWhat': 'What you checked',
@@ -491,7 +494,6 @@ const MEMORY_PAGE = 6
       'task.reopen': 'Reopen',
       'task.dispatch': 'Dispatch to Session',
       'task.dispatching': 'Dispatching…',
-      'task.dispatchCost': 'Sends one prompt to that Session and spends its quota',
       'task.dispatchNoSession': 'Bind a main Session before dispatching',
       'task.dispatchFailed': 'Dispatch failed',
       'task.dispatchDone': 'Dispatched',
@@ -561,6 +563,8 @@ const MEMORY_PAGE = 6
       'auto.hint': 'Every 20s, dispatches todo cards that already own a Session',
       'task.session': 'Main Session',
       'task.sessionNone': 'No main Session yet',
+      'task.sessionGone': 'Session archived',
+      'task.sessionGoneHint': 'That Session has been archived and cannot be opened; bind another one.',
       'task.createSession': 'New main Session',
       'task.creatingSession': 'Creating…',
       'task.linkSession': 'Link an existing Session',
@@ -981,7 +985,12 @@ const MEMORY_PAGE = 6
 .dsh-board__shared {
   display: block;
   width: 100%;
-  min-height: 92px;
+  /* Six whole lines, and it grows with the text up to a cap: a fixed box cut the
+     seventh line in half at its bottom edge. */
+  min-height: 128px;
+  max-height: 340px;
+  overflow-y: auto;
+  field-sizing: content;
   padding: 10px 12px;
   border: 0.5px solid var(--dsw-alias-border-l3);
   border-radius: 10px;
@@ -1317,13 +1326,14 @@ const MEMORY_PAGE = 6
   white-space: nowrap;
 }
 .dsh-board__empty {
+  /* Same weight as an empty lane: an empty section is a line, not a monument. */
   margin: 0;
-  padding: 14px 12px;
+  padding: 6px 10px;
   border: 0.5px dashed var(--dsw-alias-border-l3);
-  border-radius: 10px;
+  border-radius: 8px;
   color: var(--dsw-alias-label-tertiary);
-  font-size: 12px;
-  line-height: 18px;
+  font-size: 11px;
+  line-height: 16px;
   text-align: center;
 }
 .dsh-board__center {
@@ -1854,10 +1864,12 @@ const MEMORY_PAGE = 6
   padding-right: 2px;
 }
 .dsh-board__columnEmpty {
+  /* One slim line, not a box: five empty lanes should cost five lines, not five
+     blocks that push the lanes with work off the screen. */
   margin: 0;
-  padding: 10px 8px;
+  padding: 4px 8px;
   border: 0.5px dashed var(--dsw-alias-border-l2);
-  border-radius: 10px;
+  border-radius: 8px;
   color: var(--dsw-alias-label-tertiary);
   font-size: 11px;
   line-height: 16px;
@@ -1922,8 +1934,22 @@ const MEMORY_PAGE = 6
   cursor: pointer;
 }
 .dsh-board__rootDirRow {
-  flex: 1 1 260px;
-  min-width: 200px;
+  display: flex;
+  flex: 1 1 300px;
+  align-items: center;
+  gap: 8px;
+  min-width: 220px;
+}
+.dsh-board__rootDirLabel {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.dsh-board__rootDirRow .dsh-board__input {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 .dsh-board__evidence,
 .dsh-board__deliverables {
@@ -1935,6 +1961,12 @@ const MEMORY_PAGE = 6
 }
 .dsh-board__missing {
   color: var(--dsw-alias-state-error-primary);
+}
+.dsh-board__archiveHint {
+  margin: 0 0 8px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
 }
 .dsh-board__archiveList {
   display: flex;
@@ -2260,7 +2292,7 @@ const MEMORY_PAGE = 6
 }
 .dsh-board__columnEmpty {
   border: 1px dashed color-mix(in srgb, var(--dsw-alias-border-l2) 70%, transparent);
-  border-radius: 10px;
+  border-radius: 8px;
 }
 .dsh-board__detailCollapsed .dsh-board__sectionHint {
   margin: 0;
@@ -2362,7 +2394,9 @@ const MEMORY_PAGE = 6
   outline-offset: 1px;
 }
 .dsh-board__taskCompact .dsh-board__taskTitle:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+  /* A hint that the text is clickable, not an input field: at full strength the
+     fill made the title look editable before anyone clicked it. */
+  background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover) 55%, transparent);
 }
 .dsh-board__taskCompact .dsh-board__taskTitle:focus-visible {
   outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color);
@@ -2410,6 +2444,13 @@ const MEMORY_PAGE = 6
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+.dsh-board__chip--gone {
+  /* Archived reads as a warning, not as a missing detail: DSH itself treats an
+     archived conversation as something you cannot open right now. */
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 12%, transparent);
+  border: 0.5px solid color-mix(in srgb, var(--dsw-alias-state-warn-primary) 32%, transparent);
+  color: var(--dsw-alias-state-warn-primary);
 }
 .dsh-board__chipRow {
   display: flex;
@@ -2958,6 +2999,10 @@ const MEMORY_PAGE = 6
       const busyRef = React.useRef(false)
       const rebasesRef = React.useRef(0)
       const retriesRef = React.useRef(0)
+      // Cold storage is read on demand, so a write to it needs a reload *after* the ops
+      // reach the Host: reloading at enqueue time raced the flush and showed the
+      // archive as it was before the write.
+      const afterFlushRef = React.useRef([])
 
       const commit = React.useCallback((next) => {
         const serialized = serializeProjects(next)
@@ -2997,6 +3042,13 @@ const MEMORY_PAGE = 6
         setRaw(serialized)
       }, [])
 
+      /** Run the callbacks that were waiting for the queue to reach the Host. */
+      const runAfterFlush = React.useCallback(() => {
+        const waiting = afterFlushRef.current
+        afterFlushRef.current = []
+        for (const callback of waiting) callback()
+      }, [])
+
       /** Send whatever is queued, then settle the status. */
       const flush = React.useCallback(async () => {
         if (busyRef.current) return
@@ -3007,6 +3059,9 @@ const MEMORY_PAGE = 6
         const queued = queueRef.current
         if (queued.length === 0) {
           setStatus('synced')
+          // Nothing to send, so anything waiting on a flush has already waited long
+          // enough: an empty queue is the definition of flushed.
+          runAfterFlush()
           return
         }
         busyRef.current = true
@@ -3056,6 +3111,9 @@ const MEMORY_PAGE = 6
             scheduleFlush(FLUSH_DELAY_MS)
           } else {
             setStatus('synced')
+            // Everything queued has reached the Host: now it is safe to read the
+            // surfaces that are loaded on demand (cold storage).
+            runAfterFlush()
           }
         } catch (error) {
           queueRef.current = queued.concat(queueRef.current)
@@ -3066,7 +3124,7 @@ const MEMORY_PAGE = 6
         } finally {
           busyRef.current = false
         }
-      }, [adopt])
+      }, [adopt, runAfterFlush])
 
       /** @param delay - milliseconds to wait before the next flush. */
       const scheduleFlush = React.useCallback((delay) => {
@@ -3082,7 +3140,8 @@ const MEMORY_PAGE = 6
        * pending one instead of queueing behind it, so typing costs one op.
        * @param ops - operations to queue.
        */
-      const enqueue = React.useCallback((ops) => {
+      const enqueue = React.useCallback((ops, afterFlush) => {
+        if (typeof afterFlush === 'function') afterFlushRef.current.push(afterFlush)
         if (!Array.isArray(ops) || ops.length === 0) return
         for (const op of ops) {
           if (op === null || typeof op !== 'object') continue
@@ -3271,6 +3330,36 @@ const MEMORY_PAGE = 6
         return sessions.list.subscribe(() => { setSnapshot(read()) })
       }, [sessions])
       return snapshot
+    }
+
+/**
+ * The Sessions the workspace registry currently reports as archived.
+ *
+ * DSH keeps this set itself (`workspaces.list` -> `archivedSessionIds`), and its
+ * own sidebar refuses to open those rows, so the board reads the same set instead
+ * of guessing from a Session that merely stopped being listed.
+ * @param workspaces - the Workspace service, when this profile has one.
+ * @returns archived Session ids, empty when the service is absent.
+ */
+    function useArchivedSessionIds(workspaces) {
+      const read = () => {
+        if (workspaces === undefined || workspaces === null) return []
+        if (workspaces.list === undefined || workspaces.list === null) return []
+        try {
+          const snapshot = workspaces.list.getSnapshot()
+          return Array.isArray(snapshot.archivedSessionIds) ? snapshot.archivedSessionIds : []
+        } catch (error) {
+          return []
+        }
+      }
+      const [ids, setIds] = React.useState(read)
+      React.useEffect(() => {
+        if (workspaces === undefined || workspaces === null) return undefined
+        if (workspaces.list === undefined || workspaces.list === null) return undefined
+        if (typeof workspaces.list.subscribe !== 'function') return undefined
+        return workspaces.list.subscribe(() => { setIds(read()) })
+      }, [workspaces])
+      return ids
     }
 
     /* --------------------------------------------------------------- derived */
@@ -3769,7 +3858,7 @@ const MEMORY_PAGE = 6
      * @param props - the subtask, its Session summary, and the Session actions.
      * @returns the row element.
      */
-    function SessionRow({ task, summary, t, options, busy, actions }) {
+    function SessionRow({ task, summary, archived, t, options, busy, actions }) {
       const bound = summary !== null
       const sessionTitle = bound ? (typeof summary.displayTitle === 'string' ? summary.displayTitle : String(summary.id)) : ''
       const canRename = bound && sessionTitle !== '' && sessionTitle !== task.title
@@ -3782,8 +3871,10 @@ const MEMORY_PAGE = 6
           'aria-hidden': true,
         }))
         controls.push(h('span', { className: 'dsh-board__sessionTitle', title: sessionTitle }, sessionTitle))
-        controls.push(h('span', { className: 'dsh-board__chip', 'data-live': summary.running === true ? 'true' : undefined },
-          summary.running === true ? t('task.running') : t('task.idle')))
+        controls.push(archived === true
+          ? h('span', { className: 'dsh-board__chip dsh-board__chip--gone', 'data-gone': 'true' }, t('task.sessionGone'))
+          : h('span', { className: 'dsh-board__chip', 'data-live': summary.running === true ? 'true' : undefined },
+            summary.running === true ? t('task.running') : t('task.idle')))
         if (canRename) {
           controls.push(h('button', {
             type: 'button',
@@ -3900,7 +3991,7 @@ const MEMORY_PAGE = 6
      * @returns the card element.
      */
     function TaskCard({
-      task, t, linkedMemory, summary, sessionOptions, sessionBusy, sessionError, sessionsAvailable, actions,
+      task, t, linkedMemory, summary, sessionOptions, sessionBusy, sessionError, sessionsAvailable, archivedSessionIds, actions,
     }) {
       const [rejecting, setRejecting] = React.useState(false)
       const [editingTitle, setEditingTitle] = React.useState(false)
@@ -3943,7 +4034,18 @@ const MEMORY_PAGE = 6
       // while any other card (unbound, or bound but never dispatched) still needs
       // the dispatch prompt sent.
       const armed = task.sessionId !== '' && task.contextSentAt > 0
+      // A card can outlive its Session: the conversation gets archived while the card
+      // stays on the board. DSH keeps the authoritative set in the workspace
+      // registry (`archivedSessionIds`), so the card reads that instead of
+      // guessing from a Session that merely stopped being listed.
+      const sessionArchived = task.sessionId !== ''
+        && Array.isArray(archivedSessionIds)
+        && archivedSessionIds.indexOf(task.sessionId) !== -1
       const activate = () => {
+        if (sessionArchived) {
+          setDispatchError(t('task.sessionGoneHint'))
+          return
+        }
         setDispatchBusy(true)
         setDispatchError('')
         const settle = async () => {
@@ -3992,14 +4094,25 @@ const MEMORY_PAGE = 6
         const sessionTitle = bound
           ? (typeof summary.displayTitle === 'string' && summary.displayTitle !== '' ? summary.displayTitle : String(summary.id))
           : task.sessionId
+        // An archived Session is a fact about the card, not a missing detail: the
+        // chip says it in place of the Session name nobody can open any more.
         metadataChips.push(h('span', {
           key: 'session',
-          className: 'dsh-board__chip dsh-board__chip--session',
+          className: sessionArchived
+            ? 'dsh-board__chip dsh-board__chip--gone'
+            : 'dsh-board__chip dsh-board__chip--session',
           'data-live': running ? 'true' : undefined,
-          title: running ? t('task.running') : t('task.idle'),
+          'data-gone': sessionArchived ? 'true' : undefined,
+          title: sessionArchived
+            ? t('task.sessionGoneHint')
+            : running ? t('task.running') : t('task.idle'),
         },
-        h('span', { className: 'dsh-board__dot', 'data-tone': running ? 'green' : 'idle', 'aria-hidden': true }),
-        h('span', { className: 'dsh-board__sessionTitle' }, sessionTitle)))
+        sessionArchived
+          ? h('span', { className: 'dsh-board__sessionTitle' }, t('task.sessionGone'))
+          : [
+            h('span', { key: 'dot', className: 'dsh-board__dot', 'data-tone': running ? 'green' : 'idle', 'aria-hidden': true }),
+            h('span', { key: 'title', className: 'dsh-board__sessionTitle' }, sessionTitle),
+          ]))
       }
 
       // A card with no progress and no running Session has nothing to draw.
@@ -4071,6 +4184,16 @@ const MEMORY_PAGE = 6
           // says the state again in its head.
           h('span', { className: 'dsh-board__pill', 'data-tone': tone, 'data-status': task.status }, t('status.' + task.status)),
           titleField(),
+          // A finished card can be put away from the card itself: the archive used to be
+          // reachable only after expanding the details, which is why nobody found it.
+          task.status === 'done'
+            ? h('button', {
+              type: 'button',
+              className: 'dsh-board__ghost dsh-board__archiveToggle',
+              title: t('task.archiveHint'),
+              onClick: () => { actions.archive() },
+            }, t('task.archive'))
+            : null,
           // The fold control rides the title line too, so a folded card is the
           // state, the title, the way in, and the delete button - one row.
           detailsToggle(),
@@ -4159,22 +4282,13 @@ const MEMORY_PAGE = 6
               type: 'button',
               className: 'dsh-board__ghost',
               disabled: dispatchBusy || (task.sessionId === '' && !sessionsAvailable),
-              title: armed ? t('task.openSession') : (task.sessionId === '' ? t('task.dispatchNoSession') : t('task.dispatchCost')),
+              title: sessionArchived
+                ? t('task.sessionGoneHint')
+                : armed ? t('task.openSession') : t('task.dispatchNoSession'),
               onClick: activate,
-            }, dispatchBusy ? t('task.dispatching') : armed ? t('task.openSession') : t('task.dispatch')),
-            // Only a finished card is worth putting away; archiving work in flight
-            // would hide it from the columns without anyone deciding it is done.
-            task.status === 'done'
-              ? h('button', {
-                type: 'button',
-                className: 'dsh-board__ghost',
-                title: t('task.archiveHint'),
-                onClick: () => { actions.archive() },
-              }, t('task.archive'))
-              : null,
-            task.sessionId === ''
-              ? null
-              : h('span', { className: 'dsh-board__sessionLabel' }, t('task.dispatchCost'))),
+            }, sessionArchived
+              ? t('task.sessionGone')
+              : dispatchBusy ? t('task.dispatching') : armed ? t('task.openSession') : t('task.dispatch'))),
           task.status === 'done' && task.acceptedBy !== ''
             ? h('p', { key: 'acceptedNote', className: 'dsh-board__acceptedNote' },
               task.acceptedBy === 'auto' ? t('task.acceptedAuto') : t('task.acceptedHuman'))
@@ -4371,6 +4485,7 @@ const MEMORY_PAGE = 6
             key: 'session',
             task,
             summary,
+            archived: sessionArchived,
             t,
             options: sessionOptions,
             busy: sessionBusy,
@@ -4456,7 +4571,7 @@ const MEMORY_PAGE = 6
      * @param props - the selected project, its update callbacks, Session data, and locale seat.
      * @returns the detail element.
      */
-    function ProjectDetail({ project, t, actions, sessionsSnapshot, sessionsAvailable, materialsTyping }) {
+    function ProjectDetail({ project, t, actions, sessionsSnapshot, sessionsAvailable, archivedSessionIds, materialsTyping }) {
       const [describeDraft, setDescribeDraft] = React.useState('')
       const [memoryDraft, setMemoryDraft] = React.useState('')
       const [memoryLink, setMemoryLink] = React.useState('')
@@ -4652,6 +4767,7 @@ const MEMORY_PAGE = 6
         sessionBusy: busyTaskId === task.id,
         sessionError: busyTaskId === '' && sessionError !== '' ? sessionError : '',
         sessionsAvailable,
+        archivedSessionIds,
         actions: {
           title: (value) => { actions.updateTask(task.id, { title: value, titleSource: 'manual' }) },
           progress: (value) => { actions.updateTask(task.id, { progress: value }) },
@@ -4785,11 +4901,12 @@ const MEMORY_PAGE = 6
                   h('span', null, t(labelKey)))),
               project.acceptanceRules.verifyDeliverables === true
                 ? h('div', { className: 'dsh-board__rootDirRow' },
+                  h('span', { className: 'dsh-board__rootDirLabel' }, t('rules.rootDir')),
                   h('input', {
                     className: 'dsh-board__input dsh-board__input--compact',
                     type: 'text',
                     value: project.rootDir,
-                    placeholder: t('rules.rootDir'),
+                    placeholder: t('rules.rootDirHint'),
                     'aria-label': t('rules.rootDir'),
                     title: t('rules.rootDirHint'),
                     onChange: (event) => { actions.setRootDir(event.target.value) },
@@ -5028,6 +5145,9 @@ const MEMORY_PAGE = 6
             h('span', { className: 'dsh-board__sectionTitle' }, t('archive.title')),
             h('span', { className: 'dsh-board__sectionHint' },
               String(projectArchive.reduce((total, entry) => total + entry.tasks.length, 0)) + ' ' + t('archive.count'))),
+          // Say what the section is for: an archive nobody can explain is an archive
+          // nobody uses.
+          h('p', { className: 'dsh-board__archiveHint' }, t('archive.hint')),
           projectArchive.length === 0
             ? h('p', { className: 'dsh-board__empty' }, t('archive.empty'))
             : h('div', null,
@@ -5086,6 +5206,7 @@ const MEMORY_PAGE = 6
         setConfirming(null)
         if (accepted && pending !== null && typeof pending.onConfirm === 'function') pending.onConfirm()
       }
+      const archivedSessionIds = useArchivedSessionIds(services === undefined || services === null ? undefined : services.workspaces)
       const sessionsSnapshot = useSessionsSnapshot(services === undefined ? undefined : services.sessions)
       // Without the Session Controller an unbound card has no Session to create,
       // so its merged button stays disabled instead of failing on click.
@@ -5283,13 +5404,18 @@ const MEMORY_PAGE = 6
                 ...entry,
                 tasks: entry.tasks.filter(task => task.id !== taskId),
               }))
-              sync.enqueue([{ type: 'board.archive', projectId: selectedProjectId, taskIds: [taskId] }])
-              if (sync.loadArchive !== undefined) void sync.loadArchive()
+              sync.enqueue([{ type: 'board.archive', projectId: selectedProjectId, taskIds: [taskId] }], () => {
+                if (sync.loadArchive !== undefined) void sync.loadArchive()
+              })
+              // The archive list reloads from the flush, not from here: reading it
+              // now would race the write and show the section as it was before.
             },
           })
         },
         restoreTask: (projectId, taskId) => {
-          sync.enqueue([{ type: 'board.restore', projectId, taskIds: [taskId] }])
+          sync.enqueue([{ type: 'board.restore', projectId, taskIds: [taskId] }], () => {
+            if (sync.loadArchive !== undefined) void sync.loadArchive()
+          })
           if (sync.setArchived !== undefined) {
             sync.setArchived(prev => prev.map(project => (project.projectId === projectId
               ? { ...project, tasks: project.tasks.filter(task => task.id !== taskId) }
@@ -5859,6 +5985,7 @@ const MEMORY_PAGE = 6
               actions: { ...actions, archived: sync.archived || [] },
               sessionsSnapshot,
               sessionsAvailable,
+              archivedSessionIds,
               materialsTyping,
             })),
         undo === null

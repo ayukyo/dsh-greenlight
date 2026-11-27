@@ -294,6 +294,28 @@ function submit(form) {
   rerender()
 }
 
+/**
+ * Wait until a predicate holds, or give up after a bound.
+ *
+ * A click that writes through the Host is applied asynchronously; a fixed sleep
+ * is either wasted or too short depending on the machine. Polling the fact that
+ * matters keeps the check honest and the run deterministic.
+ * @param predicate - the condition to wait for.
+ * @param label - what is being waited for, used in the timeout message.
+ * @param timeoutMs - upper bound in milliseconds.
+ * @returns the predicate result.
+ */
+async function waitFor(predicate, label, timeoutMs) {
+  const limit = typeof timeoutMs === 'number' ? timeoutMs : 2000
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+  const started = Date.now()
+  while (Date.now() - started < limit) {
+    if (predicate()) return true
+    await sleep(40)
+  }
+  return predicate()
+}
+
 function click(element) {
   if (!element) throw new Error('element not found to click')
   element.props.onClick()
@@ -475,7 +497,14 @@ global.fetch = async (url, init) => {
     return jsonResponse(200, { revision: board.revision, board, recovered: false })
   }
   if (url === '/greenlight/archive') {
-    return jsonResponse(200, { ok: true, count: 0, updatedAt: '', projects: [] })
+    // Mirror host/routes.js: cold storage is its own document, so the fake has to
+    // publish what the archive op wrote instead of a constant empty shelf.
+    return jsonResponse(200, {
+      ok: true,
+      count: hostArchive.count,
+      updatedAt: hostArchive.updatedAt || '',
+      projects: hostArchive.projects,
+    })
   }
   if (url === '/greenlight/ops') {
     const headers = (init && init.headers) || {}
@@ -571,12 +600,48 @@ const fakeSessions = {
   },
   create: async () => {
     sessionState.createCalls += 1
+    // The real controller lists a Session as soon as it exists; a fake that did
+    // not would make a freshly bound card look like it points at nothing.
+    if (sessionState.ids.indexOf(nextSessionId) < 0) {
+      sessionState.ids = sessionState.ids.concat([nextSessionId])
+      sessionState.byId = {
+        ...sessionState.byId,
+        [nextSessionId]: { id: nextSessionId, displayTitle: nextSessionId, running: false },
+      }
+    }
     return nextSessionId
   },
   using: async (sessionId, options, operation) => operation(fakeReference(sessionId)),
   retain: sessionId => fakeReference(sessionId),
 }
-const fakeWorkspaces = { list: { getSnapshot: () => ({ items: [{ workspaceId: 'ws-1', sessionIds: [] }] }) } }
+const workspaceState = {
+  items: [{ workspaceId: 'ws-1', sessionIds: [] }],
+  pinnedSessionIds: [],
+  archivedSessionIds: [],
+  listeners: new Set(),
+}
+const fakeWorkspaces = {
+  list: {
+    getSnapshot: () => ({
+      items: workspaceState.items,
+      pinnedSessionIds: workspaceState.pinnedSessionIds,
+      archivedSessionIds: workspaceState.archivedSessionIds,
+    }),
+    subscribe: (listener) => {
+      workspaceState.listeners.add(listener)
+      return () => { workspaceState.listeners.delete(listener) }
+    },
+  },
+}
+
+/**
+ * Mark Sessions archived the way the Host does, then let the board react.
+ * @param sessionIds - ids the workspace registry now reports as archived.
+ */
+function setArchivedSessions(sessionIds) {
+  workspaceState.archivedSessionIds = sessionIds.slice()
+  for (const listener of workspaceState.listeners) listener()
+}
 const fakeUiWorkspace = { openSession: id => { openedSessions.push(id) } }
 
 const fakeCtx = {
@@ -1144,7 +1209,8 @@ const fakeCtx = {
   const advanceButtons = findAll(element => element.type === 'button' && childText(element) === '\u2192')
   check('an advance control is offered per movable card', advanceButtons.length >= 2, String(advanceButtons.length))
   click(advanceButtons[advanceButtons.length - 1])
-  await settle()
+  // The write goes through the Host, so wait for the fact rather than for a sleep.
+  await waitFor(() => stored().projects[0].tasks.some(task => task.status === 'review'), 'the second advance')
   const afterTwoAdvances = stored().projects[0].tasks.map(task => task.status)
   check('the running card advances into review, not past it', afterTwoAdvances.includes('review'), JSON.stringify(afterTwoAdvances))
   check('no card reached done by advancing', !afterTwoAdvances.includes('done'), JSON.stringify(afterTwoAdvances))
@@ -2969,6 +3035,119 @@ console.log('\n[46] a version-11 browser mirror migrates to the materials text')
   click(foldedHead)
   await settle(250)
   check('unfolding brings the cards back', byClassName('dsh-board__taskTitle').length === 3, String(byClassName('dsh-board__taskTitle').length))
+
+  console.log('\n[58] a card whose Session was archived says so and refuses to open it')
+  // The realistic shape: the Session is still listed (DSH keeps the row) and the
+  // workspace registry reports it as archived. That is the flag the board reads.
+  sessionState.ids = ['sess-archived']
+  sessionState.byId = {
+    'sess-archived': { id: 'sess-archived', displayTitle: '归档过的会话', running: false },
+  }
+  sessionState.phase = 'ready'
+  setArchivedSessions(['sess-archived'])
+  await mount({
+    seedHost: taskButtonSeed([{
+      id: 't-gone', title: '会话已归档的卡', status: 'running', progress: 40,
+      sessionId: 'sess-archived', contextSentAt: Date.now() - 60000,
+    }]),
+  })
+  await settle(320)
+  const goneChip = findAll(element => element.props !== undefined
+    && typeof element.props.className === 'string'
+    && element.props.className.split(' ').indexOf('dsh-board__chip--gone') >= 0)[0]
+  check('the card marks the archived Session on its chip', goneChip !== undefined, String(goneChip))
+  check('the chip carries the archived flag',
+    goneChip !== undefined && goneChip.props['data-gone'] === 'true',
+    goneChip && String(goneChip.props['data-gone']))
+  check('the card says the Session is archived', textOf().includes('会话已归档'), textOf().slice(0, 400))
+  check('the card no longer promises to send a prompt', !textOf().includes('消耗对应额度'), textOf().slice(0, 400))
+  // The open control lives behind the fold, so open the card first.
+  openCard('会话已归档的卡')
+  await settle(220)
+  const goneButton = byButtonText('会话已归档')
+  check('the open control reports the archived Session instead of offering a jump', goneButton !== null, String(goneButton))
+  const openedBeforeGone = openedSessions.length
+  click(goneButton)
+  await settle(140)
+  check('clicking it does not switch the workspace', openedSessions.length === openedBeforeGone,
+    openedSessions.join(','))
+  check('clicking it explains why', textOf().includes('该子会话已被归档'), textOf().slice(0, 400))
+
+  // Un-archiving the Session restores the normal open control without a reload.
+  setArchivedSessions([])
+  await settle(220)
+  check('restoring the Session brings the open control back',
+    byClassName('dsh-board__chip--gone').length === 0 && byButtonText('打开会话') !== null,
+    String(byClassName('dsh-board__chip--gone').length))
+
+  // A Session that merely is not listed is not an archived Session.
+  sessionState.ids = []
+  sessionState.byId = {}
+  await mount({
+    seedHost: taskButtonSeed([{
+      id: 't-unlisted', title: '会话不在列表里的卡', status: 'running', progress: 40,
+      sessionId: 'sess-unlisted', contextSentAt: Date.now() - 60000,
+    }]),
+  })
+  await settle(320)
+  check('a Session missing from the list is not called archived',
+    byClassName('dsh-board__chip--gone').length === 0,
+    String(byClassName('dsh-board__chip--gone').length))
+
+  console.log('\n[59] small UI details: a labelled root dir, slim empty states, a box that fits')
+  check('the project root field carries a visible label',
+    source.includes('dsh-board__rootDirLabel')
+    && dictionaries.greenlight.zh['rules.rootDir'] === '项目根目录',
+    'root dir label missing')
+  const emptyRule = (source.match(/\.dsh-board__empty \{([^}]*)\}/) || [])[1] || ''
+  check('an empty section is a line, not a block',
+    /padding:\s*6px/.test(emptyRule) && /font-size:\s*11px/.test(emptyRule),
+    emptyRule)
+  const sharedRule = (source.match(/\.dsh-board__shared \{([^}]*)\}/) || [])[1] || ''
+  check('the materials box fits whole lines and grows with its text',
+    /min-height:\s*128px/.test(sharedRule)
+    && /max-height:\s*340px/.test(sharedRule)
+    && /field-sizing:\s*content/.test(sharedRule),
+    sharedRule)
+
+  console.log('\n[60] a finished card archives itself, and the archive explains itself')
+  const archSeed = (tasks) => ({
+    version: 12,
+    revision: 130,
+    updatedAt: new Date().toISOString(),
+    projects: [{
+      id: 'p-arch', name: '归档项目', acceptanceMode: 'auto', materials: '', memory: [], trash: [], tasks,
+    }],
+  })
+  hostArchive = { count: 0, projects: [] }
+  await mount({
+    seedHost: archSeed([{
+      id: 't-done', title: '可以归档的卡', status: 'done', progress: 100, sessionId: '', contextSentAt: 0,
+    }]),
+  })
+  await settle(320)
+  check('a finished card offers archive without expanding it', byButtonText('归档') !== null, String(byButtonText('归档')))
+  check('the archive section says what it is for',
+    textOf().includes('随时可以恢复'), textOf().slice(0, 500))
+  click(byButtonText('归档'))
+  await settle(140)
+  check('archiving asks first', byAria('取消') !== null || textOf().includes('移入归档'), textOf().slice(0, 400))
+  confirmNow('归档')
+  await waitFor(() => hostArchive.count === 1, 'the archive write')
+  check('archiving moves the card to cold storage', hostArchive.count === 1, String(hostArchive.count))
+  check('the archived card left the lanes', byClassName('dsh-board__taskTitle').length === 0,
+    String(byClassName('dsh-board__taskTitle').length))
+  check('the archive lists the card', textOf().includes('可以归档的卡'), textOf().slice(0, 500))
+  check('the archived card can be restored', byButtonText('恢复') !== null)
+
+  // Work that is still moving must not be archivable: the button is decided by status.
+  await mount({
+    seedHost: archSeed([{
+      id: 't-review', title: '还在验收的卡', status: 'review', progress: 100, sessionId: '', contextSentAt: 0,
+    }]),
+  })
+  await settle(300)
+  check('a card in review cannot be archived from the card', byButtonText('归档') === null, String(byButtonText('归档')))
 
   console.log('\n' + (failures === 0 ? 'ALL ' + checks + ' CHECKS PASSED' : failures + ' of ' + checks + ' CHECKS FAILED'))
   process.exit(failures === 0 ? 0 : 1)
