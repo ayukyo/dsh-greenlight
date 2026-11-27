@@ -211,6 +211,16 @@ function childText(element) {
 }
 
 /**
+ * The title a card shows, whether it reads as text or is being edited.
+ * @param element - the title element.
+ * @returns its text.
+ */
+function titleText(element) {
+  if (element === undefined || element === null) return ''
+  return element.props.value !== undefined ? element.props.value : childText(element)
+}
+
+/**
  * Every element reachable through one element's children.
  * @param element - element to walk.
  * @param sink - accumulator.
@@ -377,7 +387,7 @@ function cardOf(title) {
     && element.props.className === 'dsh-board__task'
     && findIn(element, child => child.props !== undefined
       && child.props.className === 'dsh-board__taskTitle'
-      && child.props.value === title) !== undefined)
+      && titleText(child) === title) !== undefined)
   return card === undefined ? null : card
 }
 
@@ -823,8 +833,15 @@ const fakeCtx = {
   check('full description kept as note', doc && doc.projects[0].tasks[0].note === '修复导出超时的问题。需要查看服务日志')
   check('derived title marked auto', doc && doc.projects[0].tasks[0].titleSource === 'auto')
 
-  const titleInput = byClassName('dsh-board__taskTitle')[0]
-  check('title field exists', !!titleInput)
+  const titleField = byClassName('dsh-board__taskTitle')[0]
+  check('the title reads as text on the card', titleField !== undefined && titleField.type === 'div', titleField && titleField.type)
+  check('the title shows the whole derived name', titleText(titleField) === '修复导出超时的问题', titleText(titleField))
+  click(titleField)
+  await settle(120)
+  const titleInput = findElement(element => element.props !== undefined
+    && typeof element.props.className === 'string'
+    && element.props.className.split(' ').indexOf('dsh-board__taskTitle--editing') >= 0)
+  check('clicking the title turns it into a field', titleInput !== undefined && titleInput.type === 'textarea', titleInput && titleInput.type)
   change(titleInput, '自定义标题')
   doc = stored()
   check('title editable', doc && doc.projects[0].tasks[0].title === '自定义标题')
@@ -1469,7 +1486,7 @@ const fakeCtx = {
   const reviewCard = cardElements.find(card => descendants(card, []).some(element =>
     element.props !== undefined
     && element.props.className === 'dsh-board__taskTitle'
-    && element.props.value === '拖拽用卡片一'))
+    && titleText(element) === '拖拽用卡片一'))
   check('the dragged card is rendered in its new column', !!reviewCard)
   reviewCard.props.onDragStart()
   reviewColumn.props.onDrop()
@@ -2614,7 +2631,7 @@ console.log('\n[46] a version-11 browser mirror migrates to the materials text')
   const richPill = findIn(richCard, element => element.props && element.props.className === 'dsh-board__pill')
   check('a folded card still names its state', richPill !== undefined && childText(richPill) === '待办' && richPill.props['data-status'] === 'todo', richPill && childText(richPill))
   check('a folded card still shows its title',
-    findIn(richCard, element => element.props && element.props.className === 'dsh-board__taskTitle').props.value === '信息很多的卡')
+    titleText(findIn(richCard, element => element.props && element.props.className === 'dsh-board__taskTitle')) === '信息很多的卡')
   check('a folded card keeps its delete control', findIn(richCard, element => element.props && element.props.className === 'dsh-board__delete') !== undefined)
   const chipTexts = descendants(richCard, [])
     .filter(element => element.props && typeof element.props.className === 'string'
@@ -2688,7 +2705,7 @@ console.log('\n[46] a version-11 browser mirror migrates to the materials text')
     && findIn(openRichCard, element => element.props && element.props.className === 'dsh-board__claimForm') !== undefined)
   check('the other card stays folded', findIn(cardOf('干净的卡'), isFoldedToggle) !== undefined)
   const openToggle = findIn(openRichCard, isOpenedToggle)
-  check('the open card offers to fold again', openToggle !== undefined && childText(openToggle) === '收起详情', openToggle && childText(openToggle))
+  check('the open card offers to fold again', openToggle !== undefined && childText(openToggle) === '收起', openToggle && childText(openToggle))
   foldCard('信息很多的卡')
   const refoldedCard = cardOf('信息很多的卡')
   check('folding again hides the priority menu', findIn(refoldedCard, element => element.props && element.props['aria-label'] === '优先级') === undefined)
@@ -2746,7 +2763,7 @@ console.log('\n[46] a version-11 browser mirror migrates to the materials text')
     },
   })
   await settle(600)
-  const renderedTitles = () => byClassName('dsh-board__taskTitle').map(element => element.props.value)
+  const renderedTitles = () => byClassName('dsh-board__taskTitle').map(titleText)
   check('a long column renders only its first page', byClassName('dsh-board__task').length === 25, String(byClassName('dsh-board__task').length))
   check('the column head still counts every card',
     findElement(element => element.props && element.props.className === 'dsh-board__count' && childText(element) === '30') !== undefined,
@@ -2763,7 +2780,7 @@ console.log('\n[46] a version-11 browser mirror migrates to the materials text')
   check('the details toggle is named in both locales',
     dictionaries.greenlight.zh['task.details'] === '详情'
     && dictionaries.greenlight.en['task.details'] === 'Details'
-    && dictionaries.greenlight.zh['task.collapseDetails'] === '收起详情'
+    && dictionaries.greenlight.zh['task.collapseDetails'] === '收起'
     && dictionaries.greenlight.en['task.collapseDetails'] === 'Collapse',
     JSON.stringify({
       zhDetails: dictionaries.greenlight.zh['task.details'],
@@ -2847,6 +2864,72 @@ console.log('\n[46] a version-11 browser mirror migrates to the materials text')
   check('showing more reveals the rest of the memory',
     textOf().includes('记忆 7') && byButtonText('显示更多（还剩 2 条）') === null,
     textOf().slice(0, 400))
+
+  console.log('\n[57] lanes fold, and cards sort inside a lane')
+  const laneSeed = (tasks) => ({
+    version: 12,
+    revision: 141,
+    updatedAt: new Date().toISOString(),
+    projects: [{ id: 'p-lane', name: '泳道项目', acceptanceMode: 'auto', materials: '', memory: [], trash: [], tasks }],
+  })
+  await mount({
+    seedHost: laneSeed([
+      { id: 't-low', title: '低优先级卡', status: 'todo', priority: 'low', dueDate: '2026-12-31', progress: 0, updatedAt: 3 },
+      { id: 't-urgent', title: '紧急卡', status: 'todo', priority: 'urgent', dueDate: '', progress: 0, updatedAt: 2 },
+      { id: 't-high', title: '高优先级卡', status: 'todo', priority: 'high', dueDate: '2026-11-30', progress: 0, updatedAt: 1 },
+    ]),
+  })
+  await settle(400)
+  const cardTitles = () => byClassName('dsh-board__taskTitle').map(titleText)
+  check('the stored order is the default',
+    JSON.stringify(cardTitles()) === JSON.stringify(['低优先级卡', '紧急卡', '高优先级卡']),
+    JSON.stringify(cardTitles()))
+  const sortSelect = byAria('排序')
+  check('the board offers a sort control', sortSelect !== null)
+  change(sortSelect, 'priority')
+  await settle(250)
+  check('sorting by priority puts urgent first and low last',
+    JSON.stringify(cardTitles()) === JSON.stringify(['紧急卡', '高优先级卡', '低优先级卡']),
+    JSON.stringify(cardTitles()))
+  change(byAria('排序'), 'due')
+  await settle(250)
+  check('sorting by due date puts the nearest date first and a missing date last',
+    JSON.stringify(cardTitles()) === JSON.stringify(['高优先级卡', '低优先级卡', '紧急卡']),
+    JSON.stringify(cardTitles()))
+  check('sorting never reorders the stored document',
+    stored().projects[0].tasks.map(task => task.id).join(',') === 't-low,t-urgent,t-high',
+    stored().projects[0].tasks.map(task => task.id).join(','))
+  change(byAria('排序'), 'default')
+  await settle(250)
+  check('going back to default restores the stored order',
+    JSON.stringify(cardTitles()) === JSON.stringify(['低优先级卡', '紧急卡', '高优先级卡']),
+    JSON.stringify(cardTitles()))
+
+  // A lane head is a control now: clicking it folds the whole lane.
+  const laneHead = findAll(element => element.props !== undefined
+    && typeof element.props['aria-label'] === 'string'
+    && element.props['aria-label'].indexOf('待办 · ') === 0)[0]
+  check('the lane head is a button with its own label', laneHead !== undefined, String(laneHead))
+  check('an open lane reports itself expanded', laneHead !== undefined && laneHead.props['aria-expanded'] === true)
+  click(laneHead)
+  await settle(250)
+  const lanesAfterFold = byClassName('dsh-board__cards').length
+  check('folding a lane removes its card area',
+    lanesAfterFold === 5,
+    'card areas after fold: ' + lanesAfterFold + ' | expanded flags: ' + JSON.stringify(findAll(element => element.props !== undefined && typeof element.props['aria-expanded'] === 'boolean').map(element => element.props['aria-expanded'])))
+  // The titles also appear as <option> text in the memory link picker, so the
+  // honest check is that no card is rendered at all while the lane is folded.
+  check('folding a lane hides its cards',
+    byClassName('dsh-board__taskTitle').length === 0,
+    String(byClassName('dsh-board__taskTitle').length))
+  check('a folded lane keeps its count', textOf().includes('待办'))
+  const foldedHead = findAll(element => element.props !== undefined
+    && typeof element.props['aria-label'] === 'string'
+    && element.props['aria-label'].indexOf('待办 · ') === 0)[0]
+  check('a folded lane reports itself collapsed', foldedHead !== undefined && foldedHead.props['aria-expanded'] === false)
+  click(foldedHead)
+  await settle(250)
+  check('unfolding brings the cards back', byClassName('dsh-board__taskTitle').length === 3, String(byClassName('dsh-board__taskTitle').length))
 
   console.log('\n' + (failures === 0 ? 'ALL ' + checks + ' CHECKS PASSED' : failures + ' of ' + checks + ' CHECKS FAILED'))
   process.exit(failures === 0 ? 0 : 1)

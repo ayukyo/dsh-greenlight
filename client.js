@@ -82,6 +82,15 @@ window.__ModuleLoader__.load({
     const STATUS_ORDER = ['backlog', 'todo', 'running', 'review', 'done', 'failed']
     /** Cards a column renders before the rest wait behind a "show more" button. */
     const PAGE = 25
+    // Sorting and lane folding are board-level preferences, remembered per browser.
+    
+const SORT_MODES = ['default', 'priority', 'due', 'updated']
+    
+const SORT_KEY = 'dsh.greenlight.sort'
+    
+const LANES_KEY = 'dsh.greenlight.collapsedLanes'
+    
+const PRIORITY_RANK = { urgent: 0, high: 1, normal: 2, low: 3 }
     /** Columns a card flows through when advanced; `failed` is a resting column. */
     const ADVANCE_PATH = ['backlog', 'todo', 'running', 'review', 'done']
     /** Longest title derived from a description. */
@@ -205,7 +214,7 @@ const MEMORY_PAGE = 6
       'task.detailsShow': '展开详情',
       'task.detailsHide': '收起详情',
       'task.details': '详情',
-      'task.collapseDetails': '收起详情',
+      'task.collapseDetails': '收起',
       'task.evidence': '完成说明',
       'task.next': '下一步',
       'task.nextPlaceholder': '下一步做什么',
@@ -290,6 +299,13 @@ const MEMORY_PAGE = 6
       'filter.blocked': '只看阻塞',
       'filter.clear': '清除筛选',
       'filter.result': '筛选后 %s 项',
+      'filter.sort': '排序',
+      'sort.default': '默认顺序',
+      'sort.priority': '按优先级',
+      'sort.due': '按截止日期',
+      'sort.updated': '按最近更新',
+      'column.collapse': '收起这条泳道',
+      'column.expand': '展开这条泳道',
       'filter.none': '没有符合条件的任务',
       'task.tags': '标签',
       'task.tagsPlaceholder': '用逗号分隔',
@@ -522,6 +538,13 @@ const MEMORY_PAGE = 6
       'filter.blocked': 'Blocked only',
       'filter.clear': 'Clear filters',
       'filter.result': '%s matching',
+      'filter.sort': 'Sort',
+      'sort.default': 'Default order',
+      'sort.priority': 'By priority',
+      'sort.due': 'By due date',
+      'sort.updated': 'By last update',
+      'column.collapse': 'Fold this lane',
+      'column.expand': 'Unfold this lane',
       'filter.none': 'No subtask matches',
       'task.tags': 'Tags',
       'task.tagsPlaceholder': 'comma separated',
@@ -1766,6 +1789,41 @@ const MEMORY_PAGE = 6
   gap: 6px;
   padding: 2px 4px;
 }
+.dsh-board__columnHead {
+  /* The head folds the lane, so it is a control, not a label. */
+  cursor: pointer;
+  user-select: none;
+}
+.dsh-board__columnHead:focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+/* The chevron points right when the lane is folded, down when it is open. */
+.dsh-board__chevron {
+  flex: none;
+  width: 12px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 1;
+  transform: rotate(90deg);
+  transition: transform 120ms ease;
+}
+.dsh-board__chevron:not([data-open='true']) {
+  transform: rotate(0deg);
+}
+.dsh-board__column[data-collapsed='true'] {
+  padding: 6px 12px;
+}
+.dsh-board__column[data-collapsed='true'] .dsh-board__columnHead {
+  padding-bottom: 0;
+  border-bottom-color: transparent;
+}
+@media (hover: hover) {
+  .dsh-board__columnHead:hover .dsh-board__columnTitle {
+    color: var(--gl-state, var(--dsw-alias-label-primary));
+  }
+}
 .dsh-board__columnTitle {
   font-size: 11px;
   line-height: 16px;
@@ -2253,6 +2311,16 @@ const MEMORY_PAGE = 6
   backdrop-filter: none;
   padding: 0 2px 10px;
   border-bottom: 2px solid color-mix(in srgb, var(--gl-state, var(--gl-hairline)) 45%, transparent);
+  /* The head is a real <button> so it can be folded from the keyboard: strip the
+     control chrome and let it read exactly like the label it replaced. */
+  width: 100%;
+  border-top: 0;
+  border-left: 0;
+  border-right: 0;
+  border-radius: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
 }
 .dsh-board__cards {
   display: grid;
@@ -2290,19 +2358,30 @@ const MEMORY_PAGE = 6
   flex: none;
 }
 /* The title owns a full row inside a folded card and grows to fit it. */
+/* The title is text until it is clicked: text wraps to whatever height it needs,
+   so a long name can never be cut off, whatever the card width. */
 .dsh-board__taskCompact .dsh-board__taskTitle {
   display: block;
   width: 100%;
-  min-height: 30px;
-  padding: 4px 6px;
-  overflow: hidden;
-  border-radius: 8px;
+  padding: 2px 4px;
+  border-radius: 6px;
   line-height: 1.35;
   font-size: 13px;
   font-weight: 600;
+  cursor: text;
+  outline-offset: 1px;
+}
+.dsh-board__taskCompact .dsh-board__taskTitle:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+.dsh-board__taskCompact .dsh-board__taskTitle:focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color);
+}
+.dsh-board__taskCompact .dsh-board__taskTitle--editing {
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-base);
   resize: none;
   overflow: auto;
-  field-sizing: content;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -2316,6 +2395,17 @@ const MEMORY_PAGE = 6
   height: 22px;
   padding: 0 8px;
   font-size: 11px;
+}
+/* On the title line the field takes what is left instead of the whole row: the
+   state leads, the title fills, the fold control and the delete button close it,
+   so the four of them stay on one line. */
+.dsh-board__taskCompact .dsh-board__taskTop .dsh-board__taskTitle {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+}
+.dsh-board__taskCompact .dsh-board__taskTop .dsh-board__delete {
+  margin-left: 0;
 }
 .dsh-board__taskNotePreview {
   margin: 0;
@@ -3367,6 +3457,77 @@ const MEMORY_PAGE = 6
     }
 
     /**
+     * @returns the stored lane order, or the default one.
+     */
+    function readSortMode() {
+      try {
+        const stored = window.localStorage.getItem(SORT_KEY)
+        return SORT_MODES.indexOf(stored) === -1 ? 'default' : stored
+      } catch (error) {
+        return 'default'
+      }
+    }
+
+    /**
+     * @param mode - one of {@link SORT_MODES}.
+     */
+    function writeSortMode(mode) {
+      try {
+        window.localStorage.setItem(SORT_KEY, mode)
+      } catch (error) {
+        /* sorting still works for this session */
+      }
+    }
+
+    /**
+     * @returns the statuses whose lane starts folded.
+     */
+    function readCollapsedLanes() {
+      try {
+        const raw = JSON.parse(window.localStorage.getItem(LANES_KEY) || '[]')
+        return Array.isArray(raw) ? raw.filter(status => typeof status === 'string') : []
+      } catch (error) {
+        return []
+      }
+    }
+
+    /**
+     * @param lanes - statuses whose lane is folded.
+     */
+    function writeCollapsedLanes(lanes) {
+      try {
+        window.localStorage.setItem(LANES_KEY, JSON.stringify(lanes))
+      } catch (error) {
+        /* folding still works for this session */
+      }
+    }
+
+    /**
+     * Order the cards inside every lane.
+     *
+     * `default` keeps the stored order. The other modes put the work that needs a
+     * decision first: high priority before low, and an early due date before a
+     * late one, with cards that carry no due date last instead of first.
+     * @param tasks - cards of one lane.
+     * @param mode - one of {@link SORT_MODES}.
+     * @returns a new array, or the input when the order does not change.
+     */
+    function sortTasks(tasks, mode) {
+      if (mode === 'default' || tasks.length < 2) return tasks
+      const dueValue = (task) => {
+        if (typeof task.dueDate !== 'string' || task.dueDate === '') return Number.POSITIVE_INFINITY
+        const parsed = Date.parse(task.dueDate)
+        return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY
+      }
+      const rank = (task) => (PRIORITY_RANK[task.priority] === undefined ? PRIORITY_RANK.normal : PRIORITY_RANK[task.priority])
+      const byPriority = (left, right) => (rank(left) - rank(right)) || (dueValue(left) - dueValue(right)) || (right.updatedAt - left.updatedAt)
+      const byDue = (left, right) => (dueValue(left) - dueValue(right)) || (rank(left) - rank(right)) || (right.updatedAt - left.updatedAt)
+      const byUpdated = (left, right) => (right.updatedAt - left.updatedAt)
+      const compare = mode === 'priority' ? byPriority : mode === 'due' ? byDue : byUpdated
+      return tasks.slice().sort(compare)
+    }
+
+    /**
      * Pick the next card the auto dispatcher should send: the first todo card
      * that already owns a Session and is not blocked.
      * @param project - project to scan.
@@ -3691,7 +3852,7 @@ const MEMORY_PAGE = 6
      * @param props - the status, its cards, the locale seat, the drop callback, and the card renderer.
      * @returns the column element.
      */
-    function StatusColumn({ status, items, t, onDrop, renderTaskCard }) {
+    function StatusColumn({ status, items, t, onDrop, renderTaskCard, collapsed, onToggle }) {
       const [shown, setShown] = React.useState(PAGE)
       const visible = items.slice(0, shown)
       const remaining = items.length - visible.length
@@ -3699,16 +3860,30 @@ const MEMORY_PAGE = 6
       return h('section', {
         className: 'dsh-board__column',
         'data-status': status,
+        'data-collapsed': collapsed ? 'true' : undefined,
         onDragOver: (event) => {
           if (event !== null && event !== undefined && typeof event.preventDefault === 'function') event.preventDefault()
         },
         onDrop,
       },
-      h('header', { className: 'dsh-board__columnHead' },
-        h('span', { className: 'dsh-board__dot', 'data-tone': taskToneOf({ status, blocked: false }), 'aria-hidden': true }),
-        h('span', { className: 'dsh-board__columnTitle' }, t('status.' + status)),
-        h('span', { className: 'dsh-board__count' }, String(items.length))),
-      h('div', { className: 'dsh-board__cards' },
+      // The head folds the lane: a board with six lanes and hundreds of cards is
+      // mostly lanes you are not reading, and each one costs a screenful.
+      // A real button, not a div with role=button: the keyboard, a screen reader
+      // and the automation tree then all agree on what it does. It spans the lane
+      // width, so it is styled flat.
+      h('button', {
+        type: 'button',
+        className: 'dsh-board__columnHead',
+        onClick: () => { onToggle(status) },
+        'aria-expanded': collapsed !== true,
+        'aria-label': t('status.' + status) + ' · ' + (collapsed ? t('column.expand') : t('column.collapse')),
+        title: collapsed ? t('column.expand') : t('column.collapse'),
+      },
+      h('span', { className: 'dsh-board__chevron', 'data-open': collapsed ? undefined : 'true', 'aria-hidden': true }, '\u203a'),
+      h('span', { className: 'dsh-board__dot', 'data-tone': taskToneOf({ status, blocked: false }), 'aria-hidden': true }),
+      h('span', { className: 'dsh-board__columnTitle' }, t('status.' + status)),
+      h('span', { className: 'dsh-board__count' }, String(items.length)),
+      collapsed ? null : h('div', { className: 'dsh-board__cards' },
         items.length === 0
           ? h('p', { className: 'dsh-board__columnEmpty' }, t('column.empty'))
           : visible.map(renderTaskCard),
@@ -3718,7 +3893,7 @@ const MEMORY_PAGE = 6
             type: 'button',
             className: 'dsh-board__ghost dsh-board__more',
             onClick: () => { setShown(shown + PAGE) },
-          }, fill(t('column.more'), String(remaining)))))
+          }, fill(t('column.more'), String(remaining))))))
     }
 
     /**
@@ -3731,6 +3906,7 @@ const MEMORY_PAGE = 6
       task, t, linkedMemory, summary, sessionOptions, sessionBusy, sessionError, sessionsAvailable, actions,
     }) {
       const [rejecting, setRejecting] = React.useState(false)
+      const [editingTitle, setEditingTitle] = React.useState(false)
       const [reason, setReason] = React.useState('')
       const [dispatchBusy, setDispatchBusy] = React.useState(false)
       const [dispatchError, setDispatchError] = React.useState('')
@@ -3840,6 +4016,45 @@ const MEMORY_PAGE = 6
         onClick: () => { setExpanded(!expanded) },
       }, expanded ? t('task.collapseDetails') : t('task.details'))
 
+      /**
+       * The title reads as text and becomes a field when clicked.
+       *
+       * A field that is always a field has to guess its own height, and every
+       * guess clipped a long title somewhere. Text wraps to whatever it needs.
+       * @returns the title element.
+       */
+      const titleField = () => {
+        if (editingTitle) {
+          return h('textarea', {
+            className: 'dsh-board__taskTitle dsh-board__taskTitle--editing',
+            rows: Math.max(1, Math.min(8, Math.ceil(task.title.length / 20))),
+            value: task.title,
+            'aria-label': t('task.title'),
+            placeholder: t('task.untitled'),
+            autoFocus: true,
+            onChange: (event) => { actions.title(event.target.value) },
+            onBlur: (event) => {
+              if (event.target.value.trim() === '') actions.title(t('task.untitled'))
+              setEditingTitle(false)
+            },
+          })
+        }
+        return h('div', {
+          className: 'dsh-board__taskTitle',
+          role: 'textbox',
+          tabIndex: 0,
+          title: task.titleSource === 'auto' ? t('task.describe') : t('task.title'),
+          'aria-label': t('task.title'),
+          onClick: () => { setEditingTitle(true) },
+          onKeyDown: (event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              if (typeof event.preventDefault === 'function') event.preventDefault()
+              setEditingTitle(true)
+            }
+          },
+        }, task.title)
+      }
+
       return h('article', {
         className: 'dsh-board__task',
         draggable: true,
@@ -3854,21 +4069,14 @@ const MEMORY_PAGE = 6
       // review decision stays on the folded card: it is what the card waits for.
       h('div', { className: 'dsh-board__taskCompact' },
         h('div', { className: 'dsh-board__taskTop' },
+          // The state sits at the start of the title line instead of owning a row:
+          // a folded card should lead with what it is about, and the lane already
+          // says the state again in its head.
           h('span', { className: 'dsh-board__pill', 'data-tone': tone, 'data-status': task.status }, t('status.' + task.status)),
-          inReview
-            ? h('button', {
-              type: 'button',
-              className: 'dsh-board__ghost',
-              onClick: () => { actions.confirm() },
-            }, t('task.confirmReview'))
-            : null,
-          inReview
-            ? h('button', {
-              type: 'button',
-              className: 'dsh-board__ghost',
-              onClick: () => { setRejecting(!rejecting) },
-            }, t('task.rejectReview'))
-            : null,
+          titleField(),
+          // The fold control rides the title line too, so a folded card is the
+          // state, the title, the way in, and the delete button - one row.
+          detailsToggle(),
           h('button', {
             type: 'button',
             className: 'dsh-board__delete',
@@ -3876,23 +4084,21 @@ const MEMORY_PAGE = 6
             title: t('task.delete'),
             onClick: () => { actions.remove() },
           }, '\u00d7')),
-        // The title gets its own row and the full width of the column: squeezed
-        // between the state pill and the delete button it was cut to a few
-        // characters, which told nobody what the card was about.
-        h('textarea', {
-          className: 'dsh-board__taskTitle',
-          // Grow to fit the whole title: a fixed row count clipped it, and a
-          // clipped title tells nobody which card this is.
-          rows: Math.max(1, Math.min(6, Math.ceil(task.title.length / 26))),
-          value: task.title,
-          'aria-label': t('task.title'),
-          placeholder: t('task.untitled'),
-          title: task.titleSource === 'auto' ? t('task.describe') : t('task.title'),
-          onChange: (event) => { actions.title(event.target.value) },
-          onBlur: (event) => {
-            if (event.target.value.trim() === '') actions.title(t('task.untitled'))
-          },
-        }),
+        // The review decision stays on the folded card: it is what the card waits
+        // for. Only a card in review pays for this row.
+        inReview
+          ? h('div', { className: 'dsh-board__reviewActions' },
+            h('button', {
+              type: 'button',
+              className: 'dsh-board__ghost',
+              onClick: () => { actions.confirm() },
+            }, t('task.confirmReview')),
+            h('button', {
+              type: 'button',
+              className: 'dsh-board__ghost',
+              onClick: () => { setRejecting(!rejecting) },
+            }, t('task.rejectReview')))
+          : null,
         task.note === '' || task.note.startsWith(task.title)
           ? null
           : h('p', { className: 'dsh-board__taskNotePreview' }, task.note),
@@ -3924,10 +4130,7 @@ const MEMORY_PAGE = 6
             }),
             h('button', { type: 'button', className: 'dsh-board__primary', onClick: submitReject }, t('task.rejectSubmit')),
             h('button', { type: 'button', className: 'dsh-board__ghost', onClick: () => { setRejecting(false) } }, t('task.rejectCancel')))
-          : null,
-        expanded
-          ? null
-          : h('div', { className: 'dsh-board__taskActions' }, detailsToggle())),
+          : null),
       expanded
         ? [
           // Everything the folded card holds back, in the order it always had.
@@ -4290,19 +4493,23 @@ const MEMORY_PAGE = 6
       const sessionOptions = React.useMemo(() => sessionOptionsOf(sessionsSnapshot), [sessionsSnapshot])
       const [filterText, setFilterText] = React.useState('')
       const [filterMode, setFilterMode] = React.useState('all')
+      // Sorting and folding are view preferences: they never touch the document.
+      const [sortMode, setSortMode] = React.useState(readSortMode)
+      const [collapsedLanes, setCollapsedLanes] = React.useState(readCollapsedLanes)
 
       // Filtering is display-only: the board document is untouched, and a
       // filtered-out card can still be edited after clearing the filter.
       const visibleTasks = React.useMemo(() => {
         const needle = filterText.trim().toLowerCase()
-        return project.tasks.filter((task) => {
+        const filtered = project.tasks.filter((task) => {
           if (filterMode === 'overdue' && !isOverdue(task)) return false
           if (filterMode === 'blocked' && task.blocked !== true) return false
           if (needle === '') return true
           const haystack = [task.title, task.note, task.tags.join(' ')].join(' ').toLowerCase()
           return haystack.includes(needle)
         })
-      }, [project, filterText, filterMode])
+        return sortTasks(filtered, sortMode)
+      }, [project, filterText, filterMode, sortMode])
 
       // One summary lookup per subtask, shared by the cards and the hero counters.
       const summaries = React.useMemo(() => {
@@ -4504,6 +4711,14 @@ const MEMORY_PAGE = 6
           t,
           onDrop: () => { actions.dropOn(status) },
           renderTaskCard,
+          collapsed: collapsedLanes.indexOf(status) !== -1,
+          onToggle: (lane) => {
+            const next = collapsedLanes.indexOf(lane) === -1
+              ? collapsedLanes.concat([lane])
+              : collapsedLanes.filter(entry => entry !== lane)
+            setCollapsedLanes(next)
+            writeCollapsedLanes(next)
+          },
         })
       })
 
@@ -4727,6 +4942,20 @@ const MEMORY_PAGE = 6
                 h('option', { value: 'all' }, t('filter.all')),
                 h('option', { value: 'overdue' }, t('filter.overdue')),
                 h('option', { value: 'blocked' }, t('filter.blocked'))),
+                h('select', {
+                  className: 'dsh-board__select dsh-board__select--compact',
+                  value: sortMode,
+                  'aria-label': t('filter.sort'),
+                  title: t('filter.sort'),
+                  onChange: (event) => {
+                    setSortMode(event.target.value)
+                    writeSortMode(event.target.value)
+                  },
+                },
+                h('option', { value: 'default' }, t('sort.default')),
+                h('option', { value: 'priority' }, t('sort.priority')),
+                h('option', { value: 'due' }, t('sort.due')),
+                h('option', { value: 'updated' }, t('sort.updated'))),
                 (filterText === '' && filterMode === 'all')
                   ? null
                   : h('button', {
