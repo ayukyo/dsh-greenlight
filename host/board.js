@@ -531,12 +531,46 @@ function deriveContextSentAt(raw) {
  * @param raw - candidate subtask.
  * @returns a normalized subtask, or null when unusable.
  */
+/**
+ * Restore a title that an older build cut short.
+ *
+ * Titles derived from a description used to be hard-cut at 30 characters, so a
+ * stored card can carry a title that stops mid-word while the full text still
+ * sits in its note. Recognising that exact shape - a 30-character title that the
+ * note starts with - and re-deriving from the note is safe: a hand-written title
+ * would not be a word-for-word prefix of its own description.
+ * @param title - stored title.
+ * @param note - stored description.
+ * @returns the title, repaired when it was provably clipped.
+ */
+function repairDerivedTitle(title, note) {
+  // A link belongs in the description, not in the name of the card.
+  const cleaned = trimTrailingLink(title)
+  if (cleaned !== title) return bounded(cleaned, Math.min(MAX_TITLE_LENGTH, 120))
+  if (title.length !== 30 || note.length <= 30 || !note.startsWith(title)) return title
+  const line = note.split(/\r?\n/)[0].trim()
+  const sentence = line.split(/[。！？!?；;]/)[0].trim()
+  const candidate = trimTrailingLink(sentence === '' ? line : sentence)
+  if (candidate.length <= title.length) return title
+  return bounded(candidate, Math.min(MAX_TITLE_LENGTH, 120))
+}
+
+/**
+ * Drop a URL that was pasted along with the task name.
+ * @param text - candidate title.
+ * @returns the text before the link, trimmed.
+ */
+function trimTrailingLink(text) {
+  const cut = String(text).split(/\s*https?:\/\//)[0].trim()
+  return cut === '' ? String(text).trim() : cut
+}
+
 function normalizeTask(raw) {
   if (!isRecord(raw) || typeof raw.title !== 'string') return null
   const createdAt = typeof raw.createdAt === 'number' && Number.isFinite(raw.createdAt) ? raw.createdAt : Date.now()
   return {
     id: typeof raw.id === 'string' && raw.id !== '' ? raw.id : createId('t'),
-    title: bounded(raw.title, MAX_TITLE_LENGTH),
+    title: repairDerivedTitle(bounded(raw.title, MAX_TITLE_LENGTH), bounded(asString(raw.note), MAX_NOTE_LENGTH)),
     titleSource: raw.titleSource === 'auto' ? 'auto' : 'manual',
     note: bounded(asString(raw.note), MAX_NOTE_LENGTH),
     status: asStatus(raw.status, raw.progress >= 100 ? 'done' : raw.progress > 0 ? 'running' : 'todo'),

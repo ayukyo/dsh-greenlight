@@ -655,7 +655,7 @@ const fakeCtx = {
   check('list marker stripped', testHelpers.deriveTitle('- 整理接口文档') === '整理接口文档', testHelpers.deriveTitle('- 整理接口文档'))
   check('numbered marker stripped', testHelpers.deriveTitle('1. 补充单元测试') === '补充单元测试', testHelpers.deriveTitle('1. 补充单元测试'))
   check('first paragraph used', testHelpers.deriveTitle('\n\n第二行才是内容\n第三行') === '第二行才是内容', testHelpers.deriveTitle('\n\n第二行才是内容\n第三行'))
-  check('long text truncated', testHelpers.deriveTitle('这是一个非常长的任务描述'.repeat(6)).length <= 30)
+  check('a long description keeps a readable title', testHelpers.deriveTitle('这是一个非常长的任务描述'.repeat(6)).length <= 120)
   check('blank text yields empty title', testHelpers.deriveTitle('   \n  ') === '', JSON.stringify(testHelpers.deriveTitle('   \n  ')))
 
   console.log('\n[4] migration and derived values')

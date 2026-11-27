@@ -85,7 +85,7 @@ window.__ModuleLoader__.load({
     /** Columns a card flows through when advanced; `failed` is a resting column. */
     const ADVANCE_PATH = ['backlog', 'todo', 'running', 'review', 'done']
     /** Longest title derived from a description. */
-    const MAX_DERIVED_TITLE = 30
+    const MAX_DERIVED_TITLE = 120
     /** How many Sessions the "link an existing Session" menu lists. */
     const SESSION_OPTION_LIMIT = 60
     /** A draft plan holds at most this many items; the Host accepts no more. */
@@ -1054,7 +1054,7 @@ const MEMORY_PAGE = 6
   color: var(--dsw-alias-label-secondary);
   font-variant-numeric: tabular-nums;
 }
-.dsh-board__taskNote {
+.dsh-board__taskNotePreview {
   height: 28px;
   padding: 0 8px;
   border: 0.5px solid var(--dsw-alias-border-l2);
@@ -1091,6 +1091,11 @@ const MEMORY_PAGE = 6
 }
 .dsh-board__chip {
   flex: none;
+  /* A chip can hold a task title, and titles are long now: without a cap the
+     nowrap chip pushes whatever sits beside it down to a sliver. */
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   padding: 1px 7px;
   border-radius: 6px;
   background: var(--dsw-alias-interactive-bg-hover);
@@ -1098,6 +1103,9 @@ const MEMORY_PAGE = 6
   font-size: 11px;
   line-height: 16px;
   white-space: nowrap;
+}
+.dsh-board__memoryMeta .dsh-board__chip {
+  max-width: 160px;
 }
 .dsh-board__chip[data-live='true'] {
   color: var(--dsw-alias-state-success-primary);
@@ -1278,6 +1286,8 @@ const MEMORY_PAGE = 6
   flex: none;
   align-items: center;
   gap: 6px;
+  max-width: 46%;
+  overflow: hidden;
   color: var(--dsw-alias-label-tertiary);
   font-size: 11px;
   line-height: 16px;
@@ -1665,7 +1675,7 @@ const MEMORY_PAGE = 6
 .dsh-board__taskMeta {
   gap: 10px;
 }
-.dsh-board__taskNote {
+.dsh-board__taskNotePreview {
   height: 30px;
   border-radius: 7px;
 }
@@ -2221,6 +2231,45 @@ const MEMORY_PAGE = 6
 .dsh-board__badge[data-tone='ok'] {
   background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 18%, transparent);
 }
+/* ------------------------------------------------------- lanes, not columns
+   Six narrow columns side by side squeezed every title down to a few characters
+   and made the reader scan horizontally for a card that is usually in one of two
+   states. The states stack instead: one full-width lane each, top to bottom in
+   workflow order, and the cards inside a lane are wide enough to show a whole
+   title and its chips. */
+.dsh-board__columns {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.dsh-board__column {
+  width: 100%;
+  max-height: none;
+  padding: 10px 12px 12px;
+}
+.dsh-board__columnHead {
+  position: static;
+  background: transparent;
+  backdrop-filter: none;
+  padding: 0 2px 10px;
+  border-bottom: 2px solid color-mix(in srgb, var(--gl-state, var(--gl-hairline)) 45%, transparent);
+}
+.dsh-board__cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(460px, 1fr));
+  gap: 10px;
+  align-content: start;
+  /* A lane with eighty cards still scrolls itself, just generously. */
+  max-height: 62vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
+}
+@media (max-width: 760px) {
+  .dsh-board__cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 
 /* --------------------------------------------------------- compact cards
    A column holds dozens of cards, so a card shows four short rows by default:
@@ -2240,10 +2289,44 @@ const MEMORY_PAGE = 6
 .dsh-board__taskCompact .dsh-board__taskTop .dsh-board__pill {
   flex: none;
 }
+/* The title owns a full row inside a folded card and grows to fit it. */
+.dsh-board__taskCompact .dsh-board__taskTitle {
+  display: block;
+  width: 100%;
+  min-height: 30px;
+  padding: 4px 6px;
+  overflow: hidden;
+  border-radius: 8px;
+  line-height: 1.35;
+  font-size: 13px;
+  font-weight: 600;
+  resize: none;
+  overflow: auto;
+  field-sizing: content;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.dsh-board__taskCompact .dsh-board__taskTop {
+  gap: 6px;
+}
+.dsh-board__taskCompact .dsh-board__taskTop .dsh-board__delete {
+  margin-left: auto;
+}
 .dsh-board__taskCompact .dsh-board__taskTop .dsh-board__ghost {
   height: 22px;
   padding: 0 8px;
   font-size: 11px;
+}
+.dsh-board__taskNotePreview {
+  margin: 0;
+  padding: 0 6px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .dsh-board__chipRow {
   display: flex;
@@ -2391,6 +2474,8 @@ const MEMORY_PAGE = 6
       const sentence = candidate.split(/[。！？!?；;]/)[0]
       if (sentence !== undefined && sentence.trim() !== '') candidate = sentence
       candidate = candidate.replace(/\s+/g, ' ').trim()
+      // A pasted link is part of the description, not part of the name.
+      candidate = candidate.split(/\s*https?:\/\//)[0].trim()
       if (candidate.length > MAX_DERIVED_TITLE) candidate = candidate.slice(0, MAX_DERIVED_TITLE).trim()
       return candidate
     }
@@ -3784,18 +3869,6 @@ const MEMORY_PAGE = 6
               onClick: () => { setRejecting(!rejecting) },
             }, t('task.rejectReview'))
             : null,
-          h('input', {
-            className: 'dsh-board__taskTitle',
-            type: 'text',
-            value: task.title,
-            'aria-label': t('task.title'),
-            placeholder: t('task.untitled'),
-            title: task.titleSource === 'auto' ? t('task.describe') : t('task.title'),
-            onChange: (event) => { actions.title(event.target.value) },
-            onBlur: (event) => {
-              if (event.target.value.trim() === '') actions.title(t('task.untitled'))
-            },
-          }),
           h('button', {
             type: 'button',
             className: 'dsh-board__delete',
@@ -3803,6 +3876,26 @@ const MEMORY_PAGE = 6
             title: t('task.delete'),
             onClick: () => { actions.remove() },
           }, '\u00d7')),
+        // The title gets its own row and the full width of the column: squeezed
+        // between the state pill and the delete button it was cut to a few
+        // characters, which told nobody what the card was about.
+        h('textarea', {
+          className: 'dsh-board__taskTitle',
+          // Grow to fit the whole title: a fixed row count clipped it, and a
+          // clipped title tells nobody which card this is.
+          rows: Math.max(1, Math.min(6, Math.ceil(task.title.length / 26))),
+          value: task.title,
+          'aria-label': t('task.title'),
+          placeholder: t('task.untitled'),
+          title: task.titleSource === 'auto' ? t('task.describe') : t('task.title'),
+          onChange: (event) => { actions.title(event.target.value) },
+          onBlur: (event) => {
+            if (event.target.value.trim() === '') actions.title(t('task.untitled'))
+          },
+        }),
+        task.note === '' || task.note.startsWith(task.title)
+          ? null
+          : h('p', { className: 'dsh-board__taskNotePreview' }, task.note),
         metadataChips.length === 0
           ? null
           : h('div', { className: 'dsh-board__chipRow' }, metadataChips),
@@ -4420,7 +4513,7 @@ const MEMORY_PAGE = 6
         key: entry.id,
         entry,
         t,
-        linkedTitle: entry.taskId === '' ? '' : (titleById[entry.taskId] || ''),
+        linkedTitle: entry.taskId === '' ? '' : (titleById[entry.taskId] || '').slice(0, 32),
         onDelete: () => { actions.deleteMemory(entry.id) },
         onSave: (text) => { actions.updateMemory(entry.id, text) },
       }))
@@ -4600,25 +4693,6 @@ const MEMORY_PAGE = 6
               ]),
         h('div', { className: 'dsh-board__card' },
           h('div', { className: 'dsh-board__sectionHead' },
-            h('span', { className: 'dsh-board__sectionTitle' }, t('archive.title')),
-            h('span', { className: 'dsh-board__sectionHint' },
-              String(projectArchive.reduce((total, entry) => total + entry.tasks.length, 0)) + ' ' + t('archive.count'))),
-          projectArchive.length === 0
-            ? h('p', { className: 'dsh-board__empty' }, t('archive.empty'))
-            : h('div', null,
-              projectArchive.map(entry => h('div', { key: entry.projectId, className: 'dsh-board__memoryItem' },
-                h('span', { className: 'dsh-board__chip' }, entry.tasks.length + ' ' + t('archive.count')),
-                h('div', { className: 'dsh-board__archiveList' },
-                  entry.tasks.map(task => h('div', { key: task.id, className: 'dsh-board__archiveRow' },
-                    h('span', { className: 'dsh-board__memoryText' }, task.title),
-                    h('button', {
-                      type: 'button',
-                      className: 'dsh-board__ghost',
-                      'aria-label': t('archive.restore'),
-                      onClick: () => { actions.restoreTask(entry.projectId, task.id) },
-                    }, t('archive.restore'))))))))),
-        h('div', { className: 'dsh-board__card' },
-          h('div', { className: 'dsh-board__sectionHead' },
             h('span', { className: 'dsh-board__sectionTitle' }, t('task.section')),
             h('span', { className: 'dsh-board__sectionHint' },
               String(project.tasks.length) + ' ' + t('rail.countUnit') + ' · ' + t('task.sectionHint'))),
@@ -4720,7 +4794,28 @@ const MEMORY_PAGE = 6
                   className: 'dsh-board__ghost dsh-board__memoryMore',
                   onClick: () => { setMemoryShown(memoryShown + MEMORY_PAGE) },
                 }, fill(t('memory.more'), String(memoryItems.length - memoryVisible.length)))
-                : null)))
+                : null)),
+        // The archive sits last: everything above it is live work, and a card that
+        // was already put away should not push that work down the page.
+        h('div', { className: 'dsh-board__card' },
+          h('div', { className: 'dsh-board__sectionHead' },
+            h('span', { className: 'dsh-board__sectionTitle' }, t('archive.title')),
+            h('span', { className: 'dsh-board__sectionHint' },
+              String(projectArchive.reduce((total, entry) => total + entry.tasks.length, 0)) + ' ' + t('archive.count'))),
+          projectArchive.length === 0
+            ? h('p', { className: 'dsh-board__empty' }, t('archive.empty'))
+            : h('div', null,
+              projectArchive.map(entry => h('div', { key: entry.projectId, className: 'dsh-board__memoryItem' },
+                h('span', { className: 'dsh-board__chip' }, entry.tasks.length + ' ' + t('archive.count')),
+                h('div', { className: 'dsh-board__archiveList' },
+                  entry.tasks.map(task => h('div', { key: task.id, className: 'dsh-board__archiveRow' },
+                    h('span', { className: 'dsh-board__memoryText' }, task.title),
+                    h('button', {
+                      type: 'button',
+                      className: 'dsh-board__ghost',
+                      'aria-label': t('archive.restore'),
+                      onClick: () => { actions.restoreTask(entry.projectId, task.id) },
+                    }, t('archive.restore'))))))))))
     }
 
     /**
