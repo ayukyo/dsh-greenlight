@@ -55,10 +55,14 @@ Humans stop reviewing everything and start handling exceptions. That is the gree
 **Start from materials**
 - Real work arrives as source trees, requirement docs, API docs and a few links: they are one block
   of text in Project materials — paste it and it saves
-- The agent reads that block, then hands over a **draft plan** through `greenlight_plan_set`
-  (a proposal, no cards yet)
+- Paste a requirement into the subtask field and press **Split into subtasks**: the board creates a
+  Session, hands it the materials, your text, the titles already on the board and the output rules,
+  and the agent returns a **draft plan** through `greenlight_plan_set` (a proposal, no cards). Asking
+  the agent in a conversation still works the same way
 - The draft is editable (summary, titles, notes, remove or add rows); cards are created only when a
   human presses create, and an edit keeps the deliverables and priority the agent attached
+- Confirmed draft cards land in **Backlog**: planned but not yet queued — move them to Todo before
+  auto dispatch will pick them up
 
 **Context**
 - Projects → subtasks, each subtask bindable to one main Session, one-click dispatch

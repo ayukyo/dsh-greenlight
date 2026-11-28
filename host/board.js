@@ -807,7 +807,8 @@ function validatePlanItems(value) {
 
 /**
  * Turn one plan item into a subtask record, at the task defaults the contract
- * states: `todo`, zero progress, and the item's note/priority/tags/
+ * states: `backlog` (a confirmed draft is work that is planned but not yet
+ * committed to this run), zero progress, and the item's note/priority/tags/
  * deliverables carried over.
  * @param item - normalized plan item.
  * @param at - creation timestamp.
@@ -819,7 +820,7 @@ function taskFromPlanItem(item, at) {
     title: item.title,
     titleSource: 'manual',
     note: item.note,
-    status: 'todo',
+    status: 'backlog',
     progress: 0,
     priority: item.priority,
     tags: item.tags,

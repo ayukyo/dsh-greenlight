@@ -2295,8 +2295,8 @@ console.log('\n[45] version 12: the draft plan and its migration')
   const appliedProject = stored().projects[0]
   check('the draft is cleared after applying', appliedProject.plan === null, JSON.stringify(appliedProject.plan))
   check('the draft card disappears after applying', !textOf().includes('拆解草案'), textOf().slice(0, 320))
-  check('the draft items became subtasks',
-    appliedProject.tasks.length === 3 && appliedProject.tasks.every(task => task.status === 'todo' && task.progress === 0),
+  check('the draft items became subtasks in the planner lane',
+    appliedProject.tasks.length === 3 && appliedProject.tasks.every(task => task.status === 'backlog' && task.progress === 0),
     JSON.stringify(appliedProject.tasks.map(task => ({ title: task.title, status: task.status, progress: task.progress }))))
   const firstAppliedTask = appliedProject.tasks[0] === undefined ? {} : appliedProject.tasks[0]
   check('the created subtasks carry the item fields',
@@ -3288,6 +3288,84 @@ console.log('\n[46] a version-11 browser mirror migrates to the materials text')
   check('the new Session is created in the pinned Workspace',
     sessionState.lastCreateRequest !== null && sessionState.lastCreateRequest.workspaceId === 'ws-2',
     JSON.stringify(sessionState.lastCreateRequest))
+
+  console.log('\n[62] split a paragraph into subtask drafts through a Session')
+  const splitSeed = {
+    version: 12,
+    revision: 140,
+    updatedAt: new Date().toISOString(),
+    projects: [{
+      id: 'p-split',
+      name: '拆解项目',
+      acceptanceMode: 'auto',
+      materials: '约定：先复现再改代码',
+      memory: [],
+      trash: [],
+      tasks: [{ id: 't-keep', title: '整理目录结构', status: 'backlog', progress: 0, sessionId: '', contextSentAt: 0 }],
+    }],
+  }
+  await mount({ seedHost: splitSeed })
+  await settle(320)
+  sessionState.ids = []
+  sessionState.byId = {}
+  sessionState.createCalls = 0
+  const promptedBefore = prompted.length
+
+  const splitButton = byButtonText('拆解子任务')
+  check('the split control sits next to add-subtask', splitButton !== null, textOf().slice(0, 320))
+  check('splitting needs text first', splitButton !== null && splitButton.props.disabled === true,
+    splitButton && String(splitButton.props.disabled))
+
+  change(byAria('任务描述（自动生成标题）'), '把文档站迁移拆成几步：目录、脚本、接口文档')
+  await settle(140)
+  const enabledSplit = byButtonText('拆解子任务')
+  check('typing text enables the split control', enabledSplit !== null && enabledSplit.props.disabled !== true,
+    enabledSplit && String(enabledSplit.props.disabled))
+
+  click(enabledSplit)
+  await settle(500)
+  check('splitting starts a Session for the request', sessionState.createCalls === 1, String(sessionState.createCalls))
+  const splitPrompt = prompted.length > promptedBefore ? prompted[prompted.length - 1] : null
+  check('the request reaches the Session as a prompt', splitPrompt !== null && splitPrompt.mode === 'queue',
+    JSON.stringify(splitPrompt && { mode: splitPrompt.mode }))
+  check('the prompt carries the materials the subtasks share',
+    splitPrompt !== null && splitPrompt.text.indexOf('约定：先复现再改代码') >= 0,
+    splitPrompt && splitPrompt.text.slice(0, 240))
+  check('the prompt carries what the user typed',
+    splitPrompt !== null && splitPrompt.text.indexOf('把文档站迁移拆成几步') >= 0,
+    splitPrompt && splitPrompt.text.slice(0, 240))
+  check('the prompt names the project id the agent must write to',
+    splitPrompt !== null && splitPrompt.text.indexOf('p-split') >= 0,
+    splitPrompt && splitPrompt.text.slice(0, 240))
+  check('the prompt lists existing titles so the draft does not repeat them',
+    splitPrompt !== null && splitPrompt.text.indexOf('整理目录结构') >= 0,
+    splitPrompt && splitPrompt.text.slice(0, 300))
+  check('the prompt asks for a draft, not cards',
+    splitPrompt !== null && splitPrompt.text.indexOf('greenlight_plan_set') >= 0,
+    splitPrompt && splitPrompt.text.slice(0, 300))
+  check('the board says it is waiting for the draft',
+    byButtonText('拆解中…') !== null || textOf().indexOf('AI 正在拆解') >= 0,
+    textOf().slice(0, 320))
+  check('the accepted text is cleared from the input',
+    byAria('任务描述（自动生成标题）').props.value === '',
+    String(byAria('任务描述（自动生成标题）').props.value))
+
+  // The draft arrives later, through the ordinary board poll.
+  hostState.board.projects[0].plan = {
+    id: 'plan-split',
+    summary: '拆成三步',
+    items: [{ title: '整理目录', note: '', priority: 'normal', tags: [], deliverables: [] }],
+    at: Date.now(),
+  }
+  hostState.board.revision = hostState.board.revision + 1
+  await settle(4600)
+  await flush()
+  check('the waiting notice is gone once the draft lands',
+    byButtonText('拆解中…') === null,
+    textOf().slice(0, 320))
+  check('the draft shows up on the board',
+    textOf().indexOf('拆解草案') >= 0,
+    textOf().slice(0, 320))
 
   console.log('\n' + (failures === 0 ? 'ALL ' + checks + ' CHECKS PASSED' : failures + ' of ' + checks + ' CHECKS FAILED'))
   process.exit(failures === 0 ? 0 : 1)

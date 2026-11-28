@@ -46,6 +46,9 @@ window.__ModuleLoader__.load({
     const TRASH_KEEP_MS = 7 * 24 * 60 * 60 * 1000
     /** Interval of the opt-in auto dispatcher. */
     const AUTO_DISPATCH_MS = 20000
+    /** How long the board waits for a split request to come back as a draft. */
+    const SPLIT_TIMEOUT_MS = 600000
+
     /** Local key remembering whether auto dispatch is on. */
     const AUTO_DISPATCH_KEY = 'dsh.greenlight.autoDispatch'
     /** Host route that returns the authoritative board. */
@@ -156,6 +159,13 @@ const MEMORY_PAGE = 6
       'plan.summary': '拆解说明',
       'plan.deleteItem': '删除这一项',
       'plan.saveFailed': '草案至少需要一项非空标题',
+      'plan.split': '拆解子任务',
+      'plan.splittingShort': '拆解中…',
+      'plan.splitting': 'AI 正在拆解，草案写好后会出现在这里（也可以打开新会话看它的过程）。',
+      'plan.splitHint': '把输入框里的内容交给 AI，分析成多条子任务草案',
+      'plan.splitFailed': '拆解失败',
+      'plan.splitTimeout': '等了 10 分钟还没收到草案。可以打开新会话看看 AI 在做什么，或再点一次',
+      'plan.splitUnavailable': '当前环境没有会话服务，无法发起拆解',
       'confirm.discardPlan': '丢弃拆解草案？',
       'confirm.discardPlanBody': '草案会被清空，之后可以让 AI 重新生成。',
       'confirm.discardPlanAction': '丢弃',
@@ -395,6 +405,13 @@ const MEMORY_PAGE = 6
       'plan.summary': 'What this plan covers',
       'plan.deleteItem': 'Remove this item',
       'plan.saveFailed': 'A draft needs at least one non-empty title',
+      'plan.split': 'Split into subtasks',
+      'plan.splittingShort': 'Splitting…',
+      'plan.splitting': 'The agent is splitting this. The draft lands here when it is done (open the new Session to watch it).',
+      'plan.splitHint': 'Hand the text to an agent and get several subtask drafts back',
+      'plan.splitFailed': 'Split failed',
+      'plan.splitTimeout': 'No draft after ten minutes. Open the new Session to see what the agent is doing, or try again',
+      'plan.splitUnavailable': 'No Session service in this environment, so the split cannot start',
       'confirm.discardPlan': 'Discard the draft plan?',
       'confirm.discardPlanBody': 'The draft is cleared; the AI can generate a new one later.',
       'confirm.discardPlanAction': 'Discard',
@@ -3754,6 +3771,43 @@ const MEMORY_PAGE = 6
     }
 
     /**
+     * Build the prompt that asks an agent to split one paragraph into subtasks.
+     *
+     * The split happens in a Session the user never opened by hand, so the prompt
+     * has to carry everything the agent cannot look up: which project, that
+     * project's shared materials, the text being split, the titles already on the
+     * board (so the draft does not repeat them), and the tool that writes a draft
+     * instead of creating cards.
+     * @param project - project the subtasks will belong to.
+     * @param text - what the user typed into the subtask field.
+     * @returns the prompt text.
+     */
+    function buildSplitPrompt(project, text) {
+      const lines = [
+        '请把下面这段需求拆解成看板上的子任务。',
+        '',
+        '项目：' + project.name + '（projectId：' + project.id + '）',
+      ]
+      if (project.materials !== '') {
+        lines.push('', '项目资料（这是所有子任务共享的提示词）：', project.materials)
+      }
+      lines.push('', '要拆解的内容：', text)
+      if (project.tasks.length > 0) {
+        lines.push('', '项目里已有的卡片（标题不要重复）：')
+        for (const task of project.tasks) lines.push('- ' + task.title)
+      }
+      lines.push(
+        '',
+        '要求：',
+        '- 每条子任务标题简短明确，不超过 30 字；',
+        '- 每条写一句说明，讲清这一步要产出什么、怎么算完成；',
+        '- 用 greenlight_plan_set 把结果写成草案（projectId 用上面那个），不要直接建卡；',
+        '- 按建议的执行顺序排列，草案确认后卡片会进「待规划」。',
+      )
+      return lines.join('\n')
+    }
+
+    /**
      * Build the prompt text that dispatches one subtask into its Session.
      *
      * The Session has no idea the board exists unless the prompt says so, and it
@@ -4697,6 +4751,40 @@ const MEMORY_PAGE = 6
         setDescribeDraft('')
       }
 
+      // Splitting runs in its own Session, so the answer arrives later: the board
+      // shows that it is waiting, and stops when the draft lands (or when the wait
+      // has clearly gone nowhere).
+      const [splitting, setSplitting] = React.useState(false)
+      const [splitError, setSplitError] = React.useState('')
+      // The wait is derived from the data, not tracked separately: the moment a
+      // draft exists the notice has to be gone, whatever the state flag says.
+      const waitingForDraft = splitting && project.plan === null
+      React.useEffect(() => {
+        if (!splitting) return undefined
+        const timer = setTimeout(() => {
+          setSplitting(false)
+          setSplitError(t('plan.splitTimeout'))
+        }, SPLIT_TIMEOUT_MS)
+        return () => { clearTimeout(timer) }
+      }, [splitting])
+
+      const splitTasks = () => {
+        const text = describeDraft.trim()
+        if (text === '' || splitting) return
+        setSplitting(true)
+        setSplitError('')
+        const settle = async () => {
+          try {
+            await actions.splitIntoSubtasks(project.id, text)
+            setDescribeDraft('')
+          } catch (error) {
+            setSplitError(t('plan.splitFailed') + '：' + messageOf(error))
+            setSplitting(false)
+          }
+        }
+        void settle()
+      }
+
       const addMemory = (event) => {
         event.preventDefault()
         const trimmed = memoryDraft.trim()
@@ -4956,14 +5044,19 @@ const MEMORY_PAGE = 6
             className: 'dsh-board__ghost',
             onClick: () => { actions.recheck() },
           }, t('board.recheck'))),
-        project.plan === null
+        project.plan === null && !waitingForDraft
           ? null
           : h('div', { className: 'dsh-board__card' },
             h('div', { className: 'dsh-board__sectionHead' },
               h('span', { className: 'dsh-board__sectionTitle' }, t('plan.section')),
               h('span', { className: 'dsh-board__chip' },
-                String(project.plan.items.length) + ' ' + t('plan.countUnit'))),
-            planEditing
+                waitingForDraft
+                  ? t('plan.splittingShort')
+                  : String(project.plan.items.length) + ' ' + t('plan.countUnit'))),
+            waitingForDraft
+              // The request is out; the draft arrives with a later poll.
+              ? h('p', { className: 'dsh-board__sectionHint', role: 'status' }, t('plan.splitting'))
+              : planEditing
               ? h('form', { onSubmit: savePlanEdit },
                 h('input', {
                   className: 'dsh-board__input dsh-board__input--compact',
@@ -5046,7 +5139,19 @@ const MEMORY_PAGE = 6
               'aria-label': t('task.describe'),
               onChange: (event) => { setDescribeDraft(event.target.value) },
             }),
-            h('button', { type: 'submit', className: 'dsh-board__primary' }, t('task.add'))),
+            h('button', { type: 'submit', className: 'dsh-board__primary' }, t('task.add')),
+            // Splitting is the same input, spent differently: hand the paragraph to
+            // an agent and let it come back as a draft instead of one card.
+            h('button', {
+              type: 'button',
+              className: 'dsh-board__ghost',
+              disabled: waitingForDraft || describeDraft.trim() === '',
+              title: t('plan.splitHint'),
+              onClick: splitTasks,
+            }, waitingForDraft ? t('plan.splittingShort') : t('plan.split'))),
+          splitError === '' || project.plan !== null
+            ? null
+            : h('p', { className: 'dsh-board__error', role: 'alert' }, splitError),
           project.tasks.length === 0
             ? h('p', { className: 'dsh-board__empty' }, t('task.empty'))
             : h('div', null,
@@ -5797,6 +5902,43 @@ const MEMORY_PAGE = 6
           }
           if (services.uiWorkspace !== undefined && services.uiWorkspace !== null) {
             services.uiWorkspace.openSession(sessionId)
+          }
+          return sessionId
+        },
+        // Split one paragraph into subtask drafts. The work happens in a Session
+        // created for this one request, so the board never has to explain itself
+        // twice and the user can open that Session later to see what was asked.
+        splitIntoSubtasks: async (projectId, text) => {
+          if (services === undefined || services === null || services.sessions === undefined) {
+            throw new Error(t('plan.splitUnavailable'))
+          }
+          const project = projects.find(entry => entry.id === projectId)
+          if (project === undefined) throw new Error('no project')
+          const workspaceId = preferredWorkspaceId(services.workspaces)
+          const request = workspaceId === '' ? {} : { workspaceId }
+          const sessionId = await services.sessions.create(request)
+          if (typeof sessionId !== 'string' || sessionId === '') throw new Error(t('plan.splitFailed'))
+          const parts = [{ type: 'text', text: buildSplitPrompt(project, text) }]
+          const send = async (reference) => {
+            await reference.ready
+            return reference.binding.session.prompt(parts, 'queue')
+          }
+          let outcome
+          if (typeof services.sessions.using === 'function') {
+            outcome = await services.sessions.using(sessionId, { source: 'greenlight' }, send)
+          } else {
+            const reference = services.sessions.retain(sessionId, { source: 'greenlight' })
+            try {
+              outcome = await send(reference)
+            } finally {
+              reference.release()
+            }
+          }
+          if (outcome !== null && outcome !== undefined && outcome.ok === false) {
+            const failure = outcome.error
+            throw new Error(failure !== null && failure !== undefined && typeof failure.message === 'string'
+              ? failure.message
+              : t('plan.splitFailed'))
           }
           return sessionId
         },

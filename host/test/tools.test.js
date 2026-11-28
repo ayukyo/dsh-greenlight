@@ -601,7 +601,7 @@ test('the plan tools write a draft, show it on the project, and apply it to card
   assert.equal(after.plan, null, 'the draft is consumed')
   assert.equal(after.tasks.length, 3)
   const carried = after.tasks.find(task => task.title === '整理目录结构')
-  assert.equal(carried.status, 'todo')
+  assert.equal(carried.status, 'backlog')
   assert.equal(carried.progress, 0)
   assert.equal(carried.note, '输出目录树')
   assert.equal(carried.priority, 'high')

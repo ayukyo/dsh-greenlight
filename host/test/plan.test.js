@@ -155,7 +155,7 @@ test('plan.apply creates the cards in order, then clears the draft', () => {
   const created = project.tasks.filter(task => task.id !== 't-old')
   assert.deepEqual(created.map(task => task.title), ['整理目录结构', '首页性能优化'], 'items land in order')
   for (const task of created) {
-    assert.equal(task.status, 'todo')
+    assert.equal(task.status, 'backlog')
     assert.equal(task.progress, 0)
     assert.match(task.id, /^t/)
   }

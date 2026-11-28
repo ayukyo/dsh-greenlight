@@ -1063,7 +1063,7 @@ export function createBoardTools(store, options) {
     },
     {
       name: 'greenlight_plan_apply',
-      description: 'Turn the draft breakdown into real subtasks. Cards are created in item order in the todo column; an item whose title already exists in the project is skipped and reported in skippedTitles. The draft is cleared afterwards.',
+      description: 'Turn the draft breakdown into real subtasks. Cards are created in item order in the backlog column (planned, not yet queued for dispatch); an item whose title already exists in the project is skipped and reported in skippedTitles. The draft is cleared afterwards.',
       parameters: {
         type: 'object',
         required: ['projectId'],
