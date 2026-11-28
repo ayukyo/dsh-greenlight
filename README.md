@@ -15,7 +15,7 @@ agent 用 `greenlight_*` 工具交活时附上**完成说明 / 验证项 / 交�
 
 <img alt="绿灯看板：标题右侧是项目栏开关；项目概览、自动验收规则与一段多行「项目资料」" src="docs/board.png" width="900">
 
-<img alt="同一页面向下：归档区，以及六个状态的纵向泳道（待规划 / 待办 / 进行中 / 待验收 / 已完成 / 已失败）" src="docs/columns.png" width="900">
+<img alt="同一页面向下：任务按状态排成整宽泳道（待规划 / 待办 / 进行中 / 待验收 …），每张卡带状态徽章、标题、备注与优先级" src="docs/columns.png" width="900">
 
 <img alt="AI 给出的拆解草案：三条待办、各自说明，下面「全部落卡 / 编辑草案 / 丢弃草案」" src="docs/draft.png" width="900">
 

@@ -17,7 +17,7 @@ the Host decides whether the card may close.
 
 <img alt="Greenlight board: the project-rail toggle beside the title, the project summary with acceptance rules, and the multi-line materials block" src="docs/board.png" width="900">
 
-<img alt="The same page further down: the archive and the six full-width status lanes (planned, todo, running, review, done, failed)" src="docs/columns.png" width="900">
+<img alt="The same page further down: tasks arranged as full-width status lanes (planned, todo, running, review, …), each card carrying its status pill, title, note and priority" src="docs/columns.png" width="900">
 
 <img alt="A draft plan from the agent: three proposed cards with notes, and the create / edit / discard controls" src="docs/draft.png" width="900">
 
