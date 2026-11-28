@@ -172,7 +172,9 @@ const MEMORY_PAGE = 6
       'task.untitled': '未命名子任务',
       'task.note': '任务说明（可选）',
       'task.blocked': '阻塞',
+      'task.blockedHint': '标记后：项目显示为异常、不参与自动派发、不会自动验收通过',
       'task.requireHuman': '需要我验收',
+      'task.requireHumanHint': '勾选后：即使自动验收的规则都满足，也要你点「通过」才完成',
       'task.requireHumanChip': '待我验收',
       'task.delete': '删除子任务',
       'task.linkedMemory': '条记忆',
@@ -253,7 +255,6 @@ const MEMORY_PAGE = 6
       'task.reopen': '重新打开',
       'task.dispatch': '派给会话',
       'task.dispatching': '派发中…',
-      'task.dispatchNoSession': '先绑定一个主会话才能派活',
       'task.dispatchFailed': '派活失败',
       'task.dispatchDone': '已派发',
       'task.reviewHint': '执行方不能自己结账：需要人点通过才完成',
@@ -322,19 +323,17 @@ const MEMORY_PAGE = 6
       'auto.hint': '每隔 20 秒把「待办」且已绑定会话的卡片派出去',
       'task.session': '主会话',
       'task.sessionNone': '尚未绑定主会话',
+      'task.switchSession': '切换会话',
+      'task.workspace': '工作区',
+      'task.workspaceAuto': '自动（Host 列表第一个）',
+      'task.workspaceHint': '这次派活会在这个工作区里新建会话',
       'task.sessionGone': '会话已归档',
       'task.sessionGoneHint': '该子会话已被归档，无法打开；请重新绑定一个会话',
-      'task.createSession': '新建主会话',
-      'task.creatingSession': '创建中…',
-      'task.linkSession': '关联已有会话',
       'task.noSessions': '暂无可关联的会话',
       'task.openSession': '打开会话',
-      'task.unbindSession': '解除关联',
-      'task.syncSessionTitle': '用会话标题命名',
       'task.running': '运行中',
       'task.idle': '空闲',
       'task.contextMissing': '这个会话还没收到看板上下文（资料、卡片 id），点「派给会话」发送',
-      'task.createSessionFailed': '创建主会话失败',
       'memory.section': '项目记忆',
       'memory.hint': '同一项目的子任务共享这段上下文；条目可关联到某个子任务。',
       'memory.placeholder': '记录约定、结论、待确认点…',
@@ -413,7 +412,9 @@ const MEMORY_PAGE = 6
       'task.untitled': 'Untitled subtask',
       'task.note': 'Task description (optional)',
       'task.blocked': 'Blocked',
+      'task.blockedHint': 'While checked: the project reads abnormal, auto dispatch skips the card, and auto acceptance never passes it',
       'task.requireHuman': 'Needs my acceptance',
+      'task.requireHumanHint': 'While checked: even when every automatic rule passes, the card waits for your 通过 click',
       'task.requireHumanChip': 'Awaiting me',
       'task.delete': 'Delete subtask',
       'task.linkedMemory': 'memory entries',
@@ -494,7 +495,6 @@ const MEMORY_PAGE = 6
       'task.reopen': 'Reopen',
       'task.dispatch': 'Dispatch to Session',
       'task.dispatching': 'Dispatching…',
-      'task.dispatchNoSession': 'Bind a main Session before dispatching',
       'task.dispatchFailed': 'Dispatch failed',
       'task.dispatchDone': 'Dispatched',
       'task.reviewHint': 'The runner cannot close its own card: a human accepts it',
@@ -563,19 +563,17 @@ const MEMORY_PAGE = 6
       'auto.hint': 'Every 20s, dispatches todo cards that already own a Session',
       'task.session': 'Main Session',
       'task.sessionNone': 'No main Session yet',
+      'task.switchSession': 'Switch Session',
+      'task.workspace': 'Workspace',
+      'task.workspaceAuto': 'Automatic (first in the Host list)',
+      'task.workspaceHint': 'This dispatch creates its Session in that Workspace',
       'task.sessionGone': 'Session archived',
       'task.sessionGoneHint': 'That Session has been archived and cannot be opened; bind another one.',
-      'task.createSession': 'New main Session',
-      'task.creatingSession': 'Creating…',
-      'task.linkSession': 'Link an existing Session',
       'task.noSessions': 'No Session to link',
       'task.openSession': 'Open Session',
-      'task.unbindSession': 'Unlink',
-      'task.syncSessionTitle': 'Use the Session title',
       'task.running': 'Running',
       'task.idle': 'Idle',
       'task.contextMissing': 'This Session has not received the board context (materials, card id) yet - press Dispatch to send it',
-      'task.createSessionFailed': 'Creating the main Session failed',
       'memory.section': 'Project memory',
       'memory.hint': 'Subtasks in this project share this context; an entry can be linked to one subtask.',
       'memory.placeholder': 'Record an agreement, a conclusion, an open question…',
@@ -1053,19 +1051,6 @@ const MEMORY_PAGE = 6
   font: inherit;
   font-size: 13px;
 }
-.dsh-board__taskMeta {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-}
-.dsh-board__range {
-  flex: 1 1 auto;
-  min-width: 0;
-  height: 16px;
-  accent-color: var(--dsw-alias-state-business-primary);
-  cursor: pointer;
-}
 .dsh-board__check {
   display: inline-flex;
   flex: none;
@@ -1109,6 +1094,17 @@ const MEMORY_PAGE = 6
   font-size: 11px;
   line-height: 16px;
   color: var(--dsw-alias-label-tertiary);
+}
+/* The switch control is the row's one place that names the Session, so it takes
+   the width the title span used to, and truncates a long title the same way. */
+.dsh-board__sessionRow select {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 46%;
+  padding: 2px 6px;
+  font-size: 12px;
+  line-height: 18px;
+  text-overflow: ellipsis;
 }
 .dsh-board__sessionTitle {
   flex: 0 1 auto;
@@ -1705,9 +1701,6 @@ const MEMORY_PAGE = 6
   font-size: 13.5px;
   font-weight: 500;
 }
-.dsh-board__taskMeta {
-  gap: 10px;
-}
 .dsh-board__taskNotePreview {
   height: 30px;
   border-radius: 7px;
@@ -1961,6 +1954,16 @@ const MEMORY_PAGE = 6
 }
 .dsh-board__missing {
   color: var(--dsw-alias-state-error-primary);
+}
+/* The Workspace choice and the button that uses it read as one control pair. */
+.dsh-board__workspacePick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.dsh-board__workspacePick .dsh-board__sessionLabel {
+  white-space: nowrap;
 }
 .dsh-board__archiveHint {
   margin: 0 0 8px;
@@ -2469,7 +2472,9 @@ const MEMORY_PAGE = 6
   max-width: 65%;
 }
 .dsh-board__chip--session .dsh-board__sessionTitle {
-  max-width: 110px;
+  /* A Session title is the card's identity, not a badge: a normal one has to read
+     in full, and only a genuinely long one earns the ellipsis. */
+  max-width: 300px;
   font-size: 11px;
   line-height: 16px;
   color: inherit;
@@ -2999,6 +3004,9 @@ const MEMORY_PAGE = 6
       const busyRef = React.useRef(false)
       const rebasesRef = React.useRef(0)
       const retriesRef = React.useRef(0)
+      // Forward reference: flush may be entered while a send is in flight and needs to
+      // schedule the next pass, but scheduleFlush itself depends on flush.
+      const scheduleFlushRef = React.useRef(() => {})
       // Cold storage is read on demand, so a write to it needs a reload *after* the ops
       // reach the Host: reloading at enqueue time raced the flush and showed the
       // archive as it was before the write.
@@ -3051,7 +3059,13 @@ const MEMORY_PAGE = 6
 
       /** Send whatever is queued, then settle the status. */
       const flush = React.useCallback(async () => {
-        if (busyRef.current) return
+        // A send is already in flight: come back once it is done instead of dropping
+        // this pass, or work queued while a POST is open would sit unsent until some
+        // unrelated event happened to trigger the next flush.
+        if (busyRef.current) {
+          scheduleFlushRef.current(FLUSH_DELAY_MS)
+          return
+        }
         if (typeof fetch !== 'function') {
           setStatus('local')
           return
@@ -3134,6 +3148,8 @@ const MEMORY_PAGE = 6
           void flush()
         }, delay)
       }, [flush])
+      // Published after the declaration so `flush` can reach it without a cycle.
+      scheduleFlushRef.current = scheduleFlush
 
       /**
        * Queue operations for the Host. Same-target field writes replace the
@@ -3360,6 +3376,44 @@ const MEMORY_PAGE = 6
         return workspaces.list.subscribe(() => { setIds(read()) })
       }, [workspaces])
       return ids
+    }
+
+/**
+ * The Workspaces a new Session can join, as select options.
+ *
+ * DSH orders them itself (`workspaces.list` -> `items`), so the board offers that
+ * order instead of inventing one.
+ * @param workspaces - the Workspace service, when this profile has one.
+ * @returns `{ id, label }` options, empty when the service is absent.
+ */
+    function useWorkspaceOptions(workspaces) {
+      const read = () => {
+        if (workspaces === undefined || workspaces === null) return []
+        if (workspaces.list === undefined || workspaces.list === null) return []
+        try {
+          const snapshot = workspaces.list.getSnapshot()
+          const items = snapshot === null || snapshot === undefined ? [] : snapshot.items
+          if (!Array.isArray(items)) return []
+          return items
+            .filter(item => item !== null && item !== undefined && typeof item.workspaceId === 'string')
+            .map(item => ({
+              id: item.workspaceId,
+              label: typeof item.title === 'string' && item.title !== ''
+                ? item.title
+                : (typeof item.path === 'string' && item.path !== '' ? item.path : item.workspaceId),
+            }))
+        } catch (error) {
+          return []
+        }
+      }
+      const [options, setOptions] = React.useState(read)
+      React.useEffect(() => {
+        if (workspaces === undefined || workspaces === null) return undefined
+        if (workspaces.list === undefined || workspaces.list === null) return undefined
+        if (typeof workspaces.list.subscribe !== 'function') return undefined
+        return workspaces.list.subscribe(() => { setOptions(read()) })
+      }, [workspaces])
+      return options
     }
 
     /* --------------------------------------------------------------- derived */
@@ -3858,59 +3912,46 @@ const MEMORY_PAGE = 6
      * @param props - the subtask, its Session summary, and the Session actions.
      * @returns the row element.
      */
-    function SessionRow({ task, summary, archived, t, options, busy, actions }) {
+    function SessionRow({ task, summary, archived, t, options, actions }) {
       const bound = summary !== null
       const sessionTitle = bound ? (typeof summary.displayTitle === 'string' ? summary.displayTitle : String(summary.id)) : ''
-      const canRename = bound && sessionTitle !== '' && sessionTitle !== task.title
 
       const controls = []
       if (bound) {
-        controls.push(h('span', {
-          className: 'dsh-board__dot',
-          'data-tone': summary.running === true ? 'green' : 'idle',
-          'aria-hidden': true,
-        }))
-        controls.push(h('span', { className: 'dsh-board__sessionTitle', title: sessionTitle }, sessionTitle))
+        // The select below already names the Session it points at, so the row does
+        // not print the title a second time beside it. The state chip stays: it is
+        // the only thing the select cannot say, and it carries the color the dot
+        // used to.
         controls.push(archived === true
           ? h('span', { className: 'dsh-board__chip dsh-board__chip--gone', 'data-gone': 'true' }, t('task.sessionGone'))
           : h('span', { className: 'dsh-board__chip', 'data-live': summary.running === true ? 'true' : undefined },
             summary.running === true ? t('task.running') : t('task.idle')))
-        if (canRename) {
-          controls.push(h('button', {
-            type: 'button',
-            className: 'dsh-board__ghost',
-            onClick: () => { actions.syncTitle(sessionTitle) },
-          }, t('task.syncSessionTitle')))
-        }
-        controls.push(h('button', {
-          type: 'button',
-          className: 'dsh-board__ghost',
-          onClick: () => { actions.unbindSession() },
-        }, t('task.unbindSession')))
-      } else {
-        controls.push(h('span', { className: 'dsh-board__sessionLabel' }, t('task.sessionNone')))
-        controls.push(h('button', {
-          type: 'button',
-          className: 'dsh-board__ghost',
-          disabled: busy,
-          onClick: () => { actions.createSession() },
-        }, busy ? t('task.creatingSession') : t('task.createSession')))
-        if (options.length === 0) {
-          controls.push(h('span', { className: 'dsh-board__sessionLabel' }, t('task.noSessions')))
-        } else {
-          controls.push(h('select', {
-            className: 'dsh-board__ghost',
-            value: '',
-            'aria-label': t('task.linkSession'),
-            title: t('task.linkSession'),
-            onChange: (event) => {
-              const value = event.target.value
-              if (value !== '') actions.linkSession(value)
-            },
-          },
-          h('option', { value: '' }, t('task.linkSession')),
-          options.map(option => h('option', { key: option.id, value: option.id }, option.label))))
-        }
+      }
+      // One control for the whole question of which Session this card uses: the
+      // empty choice unbinds, any other choice binds. Two controls (link + unbind)
+      // made the row ask the same thing twice.
+      const switchOptions = [{ id: '', label: t('task.sessionNone') }]
+      const listsBound = task.sessionId !== '' && options.some(option => option.id === task.sessionId)
+      if (task.sessionId !== '' && !listsBound) {
+        // A bound Session the list does not carry (archived, or simply not loaded)
+        // still has to appear, or the select would claim the card is unbound.
+        switchOptions.push({ id: task.sessionId, label: sessionTitle === '' ? task.sessionId : sessionTitle })
+      }
+      for (const option of options) switchOptions.push(option)
+      controls.push(h('select', {
+        className: 'dsh-board__ghost',
+        value: task.sessionId,
+        'aria-label': t('task.switchSession'),
+        title: t('task.switchSession'),
+        onChange: (event) => {
+          const value = event.target.value
+          if (value === task.sessionId) return
+          if (value === '') actions.unbindSession()
+          else actions.linkSession(value)
+        },
+      }, switchOptions.map(option => h('option', { key: option.id, value: option.id }, option.label))))
+      if (options.length === 0) {
+        controls.push(h('span', { className: 'dsh-board__sessionLabel' }, t('task.noSessions')))
       }
 
       // Binding a Session is not the same as handing it the work: create-a-session
@@ -3991,7 +4032,7 @@ const MEMORY_PAGE = 6
      * @returns the card element.
      */
     function TaskCard({
-      task, t, linkedMemory, summary, sessionOptions, sessionBusy, sessionError, sessionsAvailable, archivedSessionIds, actions,
+      task, t, linkedMemory, summary, sessionOptions, sessionError, sessionsAvailable, archivedSessionIds, workspaceOptions, actions,
     }) {
       const [rejecting, setRejecting] = React.useState(false)
       const [editingTitle, setEditingTitle] = React.useState(false)
@@ -4233,8 +4274,7 @@ const MEMORY_PAGE = 6
               'aria-valuenow': task.progress,
               'aria-valuemin': 0,
               'aria-valuemax': 100,
-            }, h('span', { className: 'dsh-board__barFill', style: { width: task.progress + '%' } })),
-            h('span', { className: 'dsh-board__taskPercent' }, task.progress + '%'))
+            }, h('span', { className: 'dsh-board__barFill', style: { width: task.progress + '%' } })))
           : null,
         // Rejecting is a decision, not a detail: the reason field opens right
         // under the folded card, next to the button that started it.
@@ -4278,13 +4318,31 @@ const MEMORY_PAGE = 6
                 onClick: () => { actions.reopen() },
               }, t('task.reopen'))
               : null,
+            // The Workspace only matters when this click would create the Session, so the
+            // choice sits right next to the button that creates it: one control pair,
+            // one decision. A card that already owns a Session keeps that Session's
+            // Workspace, and asking again would imply the click could move it.
+            task.sessionId === '' && workspaceOptions !== undefined && workspaceOptions.length > 0
+              ? h('label', { className: 'dsh-board__workspacePick' },
+                h('span', { className: 'dsh-board__sessionLabel' }, t('task.workspace')),
+                h('select', {
+                  className: 'dsh-board__ghost',
+                  value: task.workspaceId === undefined ? '' : task.workspaceId,
+                  'aria-label': t('task.workspace'),
+                  title: t('task.workspaceHint'),
+                  onChange: (event) => { actions.workspace(event.target.value) },
+                },
+                h('option', { value: '' }, t('task.workspaceAuto')),
+                workspaceOptions.map(option => h('option', { key: option.id, value: option.id }, option.label))))
+              : null,
             h('button', {
               type: 'button',
               className: 'dsh-board__ghost',
               disabled: dispatchBusy || (task.sessionId === '' && !sessionsAvailable),
-              title: sessionArchived
-                ? t('task.sessionGoneHint')
-                : armed ? t('task.openSession') : t('task.dispatchNoSession'),
+              // No tooltip on the everyday states: "dispatch" and "open" say what
+              // they do. Only the archived case needs a word, because a disabled-
+              // looking control with no explanation is a puzzle.
+              title: sessionArchived ? t('task.sessionGoneHint') : undefined,
               onClick: activate,
             }, sessionArchived
               ? t('task.sessionGone')
@@ -4412,34 +4470,6 @@ const MEMORY_PAGE = 6
                     new Date(event.at).toLocaleString() + ' · ' + event.kind
                     + (event.from === '' ? '' : ' ' + event.from + '→' + event.to)
                     + (event.note === '' ? '' : ' · ' + event.note))))),
-          h('div', { key: 'meta', className: 'dsh-board__taskMeta' },
-            h('input', {
-              className: 'dsh-board__range',
-              type: 'range',
-              min: 0,
-              max: 100,
-              step: 5,
-              value: task.progress,
-              'aria-label': t('detail.progress'),
-              onChange: (event) => { actions.progress(clampPercent(Number(event.target.value), task.progress)) },
-            }),
-            h('span', { className: 'dsh-board__taskPercent' }, task.progress + '%'),
-            h('label', { className: 'dsh-board__check' },
-              h('input', {
-                type: 'checkbox',
-                checked: task.blocked,
-                'aria-label': t('task.blocked'),
-                onChange: (event) => { actions.blocked(event.target.checked) },
-              }),
-              t('task.blocked')),
-            h('label', { className: 'dsh-board__check' },
-              h('input', {
-                type: 'checkbox',
-                checked: task.requireHuman,
-                'aria-label': t('task.requireHuman'),
-                onChange: (event) => { actions.requireHuman(event.target.checked) },
-              }),
-              t('task.requireHuman'))),
           h('div', { key: 'fields', className: 'dsh-board__taskFields' },
             h('select', {
               className: 'dsh-board__select dsh-board__select--compact',
@@ -4471,7 +4501,27 @@ const MEMORY_PAGE = 6
             // How many memory entries point at this card is context, not state.
             linkedMemory > 0
               ? h('span', { className: 'dsh-board__chip' }, String(linkedMemory) + ' ' + t('task.linkedMemory'))
-              : null),
+              : null,
+            // The two decision guards ride the same row as the other card fields
+            // instead of owning a row of their own.
+            h('label', { className: 'dsh-board__check', title: t('task.blockedHint') },
+              h('input', {
+                type: 'checkbox',
+                checked: task.blocked,
+                'aria-label': t('task.blocked'),
+                title: t('task.blockedHint'),
+                onChange: (event) => { actions.blocked(event.target.checked) },
+              }),
+              t('task.blocked')),
+            h('label', { className: 'dsh-board__check', title: t('task.requireHumanHint') },
+              h('input', {
+                type: 'checkbox',
+                checked: task.requireHuman,
+                'aria-label': t('task.requireHuman'),
+                title: t('task.requireHumanHint'),
+                onChange: (event) => { actions.requireHuman(event.target.checked) },
+              }),
+              t('task.requireHuman'))),
           h('input', {
             key: 'note',
             className: 'dsh-board__taskNote',
@@ -4488,13 +4538,10 @@ const MEMORY_PAGE = 6
             archived: sessionArchived,
             t,
             options: sessionOptions,
-            busy: sessionBusy,
             actions: {
-              createSession: actions.createSession,
               linkSession: actions.linkSession,
               unbindSession: actions.unbindSession,
-              syncTitle: actions.syncTitle,
-            },
+              },
           }),
           sessionError === '' ? null : h('p', { key: 'sessionError', className: 'dsh-board__error', role: 'alert' }, sessionError),
           dispatchError === '' ? null : h('p', { key: 'dispatchError', className: 'dsh-board__error', role: 'alert' }, t('task.dispatchFailed') + '：' + dispatchError),
@@ -4571,7 +4618,7 @@ const MEMORY_PAGE = 6
      * @param props - the selected project, its update callbacks, Session data, and locale seat.
      * @returns the detail element.
      */
-    function ProjectDetail({ project, t, actions, sessionsSnapshot, sessionsAvailable, archivedSessionIds, materialsTyping }) {
+    function ProjectDetail({ project, t, actions, sessionsSnapshot, sessionsAvailable, archivedSessionIds, workspaceOptions, materialsTyping }) {
       const [describeDraft, setDescribeDraft] = React.useState('')
       const [memoryDraft, setMemoryDraft] = React.useState('')
       const [memoryLink, setMemoryLink] = React.useState('')
@@ -4739,22 +4786,6 @@ const MEMORY_PAGE = 6
         setPlanError(false)
       }
 
-      const createSession = (taskId) => {
-        setBusyTaskId(taskId)
-        setSessionError('')
-        const settle = async () => {
-          try {
-            const sessionId = await actions.createSession(taskId)
-            if (sessionId === '' || sessionId === undefined) setSessionError(t('task.createSessionFailed'))
-          } catch (error) {
-            setSessionError(t('task.createSessionFailed') + '：' + messageOf(error))
-          } finally {
-            setBusyTaskId('')
-          }
-        }
-        void settle()
-      }
-
       const projectArchive = (actions.archived || []).filter(entry => entry.projectId === project.id)
 
       const renderTaskCard = (task) => h(TaskCard, {
@@ -4764,13 +4795,12 @@ const MEMORY_PAGE = 6
         linkedMemory: linkedCounts[task.id] || 0,
         summary: summaries[task.id] === undefined ? null : summaries[task.id],
         sessionOptions,
-        sessionBusy: busyTaskId === task.id,
         sessionError: busyTaskId === '' && sessionError !== '' ? sessionError : '',
         sessionsAvailable,
         archivedSessionIds,
+        workspaceOptions,
         actions: {
           title: (value) => { actions.updateTask(task.id, { title: value, titleSource: 'manual' }) },
-          progress: (value) => { actions.updateTask(task.id, { progress: value }) },
           blocked: (value) => { actions.updateTask(task.id, { blocked: value }) },
           requireHuman: (value) => { actions.updateTask(task.id, { requireHuman: value }) },
           note: (value) => { actions.updateTask(task.id, { note: value }) },
@@ -4783,11 +4813,10 @@ const MEMORY_PAGE = 6
             actions.updateTask(task.id, { tags })
           },
           remove: () => { actions.deleteTask(task.id) },
-          createSession: () => { createSession(task.id) },
           openOrDispatch: () => actions.openOrDispatch(task.id),
           linkSession: (sessionId) => { actions.updateTask(task.id, { sessionId }) },
           unbindSession: () => { actions.updateTask(task.id, { sessionId: '' }) },
-          syncTitle: (title) => { actions.updateTask(task.id, { title, titleSource: 'auto' }) },
+          workspace: (value) => { actions.updateTask(task.id, { workspaceId: value }) },
           advance: () => { actions.moveTask(task.id, task.status) },
           back: () => { actions.moveTask(task.id, task.status, previousStatusOf(task.status)) },
           confirm: () => { actions.confirmReview(task.id) },
@@ -5207,6 +5236,7 @@ const MEMORY_PAGE = 6
         if (accepted && pending !== null && typeof pending.onConfirm === 'function') pending.onConfirm()
       }
       const archivedSessionIds = useArchivedSessionIds(services === undefined || services === null ? undefined : services.workspaces)
+      const workspaceOptions = useWorkspaceOptions(services === undefined || services === null ? undefined : services.workspaces)
       const sessionsSnapshot = useSessionsSnapshot(services === undefined ? undefined : services.sessions)
       // Without the Session Controller an unbound card has no Session to create,
       // so its merged button stays disabled instead of failing on click.
@@ -5748,7 +5778,16 @@ const MEMORY_PAGE = 6
         },
         createSession: async (taskId) => {
           if (services === undefined || services === null || services.sessions === undefined) return ''
-          const workspaceId = preferredWorkspaceId(services.workspaces)
+          // A card may pin its Workspace; only fall back to the first Workspace in
+          // the Host's list when it does not, so a dispatch stops landing wherever
+          // the last Session happened to go.
+          let pinned = ''
+          if (selectedProjectId !== '') {
+            const owner = projects.find(entry => entry.id === selectedProjectId)
+            const target = owner === undefined ? undefined : owner.tasks.find(task => task.id === taskId)
+            if (target !== undefined && typeof target.workspaceId === 'string') pinned = target.workspaceId
+          }
+          const workspaceId = pinned !== '' ? pinned : preferredWorkspaceId(services.workspaces)
           const request = workspaceId === '' ? {} : { workspaceId }
           const sessionId = await services.sessions.create(request)
           if (typeof sessionId !== 'string' || sessionId === '') return ''
@@ -5986,6 +6025,7 @@ const MEMORY_PAGE = 6
               sessionsSnapshot,
               sessionsAvailable,
               archivedSessionIds,
+              workspaceOptions,
               materialsTyping,
             })),
         undo === null

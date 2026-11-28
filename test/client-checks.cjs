@@ -567,7 +567,7 @@ const dictionaries = {}
 let boundNamespace = ''
 
 /* Fake Session Controller: one mutable list snapshot plus a creator. */
-const sessionState = { ids: [], byId: {}, phase: 'ready', projectionsBySession: {}, createCalls: 0 }
+const sessionState = { ids: [], byId: {}, phase: 'ready', projectionsBySession: {}, createCalls: 0, lastCreateRequest: null }
 const openedSessions = []
 const prompted = []
 let nextSessionId = 'sess-new-1'
@@ -598,8 +598,9 @@ const fakeSessions = {
     getSnapshot: () => sessionState,
     subscribe: () => () => {},
   },
-  create: async () => {
+  create: async (request) => {
     sessionState.createCalls += 1
+    sessionState.lastCreateRequest = request || {}
     // The real controller lists a Session as soon as it exists; a fake that did
     // not would make a freshly bound card look like it points at nothing.
     if (sessionState.ids.indexOf(nextSessionId) < 0) {
@@ -615,7 +616,10 @@ const fakeSessions = {
   retain: sessionId => fakeReference(sessionId),
 }
 const workspaceState = {
-  items: [{ workspaceId: 'ws-1', sessionIds: [] }],
+  items: [
+    { workspaceId: 'ws-1', title: '工作区一', path: '/tmp/ws-1', sessionIds: [] },
+    { workspaceId: 'ws-2', title: '工作区二', path: '/tmp/ws-2', sessionIds: [] },
+  ],
   pinnedSessionIds: [],
   archivedSessionIds: [],
   listeners: new Set(),
@@ -913,11 +917,15 @@ const fakeCtx = {
   check('manual edit wins over auto', doc && doc.projects[0].tasks[0].titleSource === 'manual')
 
   console.log('\n[8] progress, blocked, note')
-  // The slider, the blocked switch and the note live behind the card's details.
+  // The blocked switch and the note live behind the card's details. Progress is
+  // reported by the runner (or set when a card is accepted), so there is no manual
+  // slider to drive from here - the card only shows what the document holds.
   openCards()
-  change(byClassName('dsh-board__range')[0], '60')
-  doc = stored()
-  check('progress stored', doc && doc.projects[0].tasks[0].progress === 60, doc && String(doc.projects[0].tasks[0].progress))
+  check('the card shows no manual progress slider', byClassName('dsh-board__range').length === 0,
+    String(byClassName('dsh-board__range').length))
+  check('no completion number is printed on the card',
+    byClassName('dsh-board__taskPercent').length === 1,
+    String(byClassName('dsh-board__taskPercent').length))
   const blockedBox = byAria('阻塞')
   toggle(blockedBox, true)
   doc = stored()
@@ -985,15 +993,21 @@ const fakeCtx = {
     byAria('项目资料').props.value === stored().projects[0].materials,
     JSON.stringify({ box: byAria('项目资料').props.value, stored: stored().projects[0].materials }))
 
-  console.log('\n[10] create a main Session for the subtask')
-  const createButton = byButtonText('新建主会话')
-  check('create-session control exists', !!createButton)
-  click(createButton)
+  console.log('\n[10] binding a Session: no create-only control, the card button does it')
+  // The card's own button creates a Session and dispatches in one click, so a
+  // separate create-only control would be a second way to do half the job.
+  check('no create-only Session control on the card', byButtonText('新建主会话') === null, textOf().slice(0, 300))
+  sessionState.ids = ['sess-new-1']
+  sessionState.byId = { 'sess-new-1': { id: 'sess-new-1', displayTitle: '导出超时排查', running: true } }
+  rerender()
+  const bindSelect = byAria('切换会话')
+  check('an unbound card offers the Sessions it can link', bindSelect !== null, textOf().slice(0, 300))
+  change(bindSelect, 'sess-new-1')
   await flush()
   doc = stored()
   const taskId = doc.projects[0].tasks[0].id
-  check('subtask bound to the created Session', doc && doc.projects[0].tasks[0].sessionId === 'sess-new-1', doc && doc.projects[0].tasks[0].sessionId)
-  check('the new Session is opened', openedSessions.includes('sess-new-1'), JSON.stringify(openedSessions))
+  check('the card is bound to the chosen Session',
+    doc && doc.projects[0].tasks[0].sessionId === 'sess-new-1', doc && doc.projects[0].tasks[0].sessionId)
 
   console.log('\n[11] the bound Session names itself in the board')
   sessionState.ids = ['sess-new-1']
@@ -1001,11 +1015,11 @@ const fakeCtx = {
   rerender()
   check('Session title shown', textOf().includes('导出超时排查'), textOf().slice(0, 300))
   check('running state shown', textOf().includes('运行中'), textOf().slice(0, 300))
-  const syncButton = byButtonText('用会话标题命名')
-  check('title-sync control appears', !!syncButton)
-  click(syncButton)
+  // The Session title is shown for context; adopting it is not a control the
+  // board offers, so a differing title must not add a button.
+  check('a Session title is shown without a rename control', byButtonText('用会话标题命名') === null, textOf().slice(0, 300))
   doc = stored()
-  check('Session title adopted', doc && doc.projects[0].tasks[0].title === '导出超时排查', doc && doc.projects[0].tasks[0].title)
+  check('the card keeps its own title', doc && doc.projects[0].tasks[0].title === '自定义标题', doc && doc.projects[0].tasks[0].title)
   // The Session row no longer carries its own open control: opening a Session is
   // the second state of the card's single button, and this card was never
   // dispatched, so no open control is on screen yet.
@@ -1016,11 +1030,23 @@ const fakeCtx = {
     ? []
     : descendants(rowAfterCreate, []).filter(element => element.type === 'button').map(element => childText(element))
   check('the Session row keeps its controls and renders no open control of its own',
-    rowButtonTexts.includes('解除关联') && !rowButtonTexts.includes('打开会话'),
+    rowButtonTexts.indexOf('解除关联') < 0 && rowButtonTexts.indexOf('打开会话') < 0,
     JSON.stringify(rowButtonTexts))
+  // The switch control already names the Session it points at, so the row must not
+  // print that name a second time beside it.
+  const rowStaticTexts = rowAfterCreate === undefined
+    ? []
+    : descendants(rowAfterCreate, [])
+      .filter(element => element.type !== 'select' && element.type !== 'option')
+      .map(element => (element.props && element.props.children) || [])
+      .flat()
+      .filter(child => typeof child === 'string')
+  check('the Session row names the Session once, through its control',
+    rowStaticTexts.indexOf('导出超时排查') < 0 && byAria('切换会话').props.value === 'sess-new-1',
+    JSON.stringify({ texts: rowStaticTexts, value: byAria('切换会话').props.value }))
 
   console.log('\n[12] unbind and link an existing Session')
-  click(byButtonText('解除关联'))
+  change(byAria('切换会话'), '')
   doc = stored()
   check('binding cleared', doc && doc.projects[0].tasks[0].sessionId === '')
   sessionState.ids = ['sess-old-1', 'sess-new-1']
@@ -1029,24 +1055,27 @@ const fakeCtx = {
     'sess-new-1': { id: 'sess-new-1', displayTitle: '导出超时排查', running: true },
   }
   rerender()
-  const linkSelect = byAria('关联已有会话')
+  const linkSelect = byAria('切换会话')
   check('link menu exists', !!linkSelect)
   change(linkSelect, 'sess-old-1')
   doc = stored()
   check('existing Session linked', doc && doc.projects[0].tasks[0].sessionId === 'sess-old-1', doc && doc.projects[0].tasks[0].sessionId)
 
-  console.log('\n[13] Session creation failure is reported')
-  const failingTaskDoc = stored()
-  check('failure path starts from a bound subtask', failingTaskDoc.projects[0].tasks[0].sessionId === 'sess-old-1')
+  console.log('\n[13] a failed Session create is reported on the card')
+  change(byAria('切换会话'), '')
+  await settle(120)
   const broken = async () => { throw new Error('host refused') }
   const originalCreate = fakeSessions.create
   fakeSessions.create = broken
-  click(byButtonText('解除关联'))
-  click(byButtonText('新建主会话'))
+  const openedBeforeFailedCreate = openedSessions.length
+  click(byButtonText('派给会话'))
   await flush()
-  check('failure message rendered', textOf().includes('创建主会话失败'), textOf().slice(0, 300))
+  check('the card reports the failed create', textOf().includes('派活失败'), textOf().slice(0, 400))
+  check('nothing was dispatched after a failed create',
+    openedSessions.length === openedBeforeFailedCreate, openedSessions.join(','))
   fakeSessions.create = originalCreate
-  check('failed creation left the subtask unbound', stored().projects[0].tasks[0].sessionId === '')
+  check('a failed create leaves the card unbound', stored().projects[0].tasks[0].sessionId === '',
+    stored().projects[0].tasks[0].sessionId)
 
   console.log('\n[14] project memory shared by subtasks')
   const memoryInput = byAria('项目记忆')
@@ -1101,9 +1130,12 @@ const fakeCtx = {
   check('subtask reached the host', hostState.board.projects[0].tasks.length === 1, String(hostState.board.projects[0].tasks.length))
   check('host subtask starts in todo', hostState.board.projects[0].tasks[0].status === 'todo', hostState.board.projects[0].tasks[0].status)
   openCards()
-  change(byClassName('dsh-board__range')[0], '80')
-  await settle()
-  check('progress reached the host', hostState.board.projects[0].tasks[0].progress === 80, String(hostState.board.projects[0].tasks[0].progress))
+  check('progress is reported, not hand-set: no slider on the card',
+    byClassName('dsh-board__range').length === 0,
+    String(byClassName('dsh-board__range').length))
+  check('the only percentage on screen belongs to the project summary',
+    byClassName('dsh-board__taskPercent').length === 1,
+    String(byClassName('dsh-board__taskPercent').length))
   check('pill reports a synced board', textOf().includes('已同步'), textOf().slice(0, 160))
 
   console.log('\n[19] a browser v9 document seeds an empty Host once')
@@ -1272,7 +1304,7 @@ const fakeCtx = {
   sessionState.ids = ['sess-dispatch']
   sessionState.byId = { 'sess-dispatch': { id: 'sess-dispatch', displayTitle: '派活会话', running: false } }
   rerender()
-  const linkSelects = findAll(element => element.props && element.props['aria-label'] === '关联已有会话')
+  const linkSelects = findAll(element => element.props && element.props['aria-label'] === '切换会话')
   check('link menu available for dispatch', linkSelects.length > 0)
   change(linkSelects[0], 'sess-dispatch')
   await settle()
@@ -2689,7 +2721,7 @@ console.log('\n[46] a version-11 browser mirror migrates to the materials text')
   check('a folded card hides the due date field', byAria('截止') === null)
   check('a folded card hides the tags field', byAria('标签') === null)
   check('a folded card hides the note field', byAria('任务说明（可选）') === null)
-  check('a folded card hides the progress slider', byClassName('dsh-board__range').length === 0, String(byClassName('dsh-board__range').length))
+  check('the board never offers a manual progress slider', byClassName('dsh-board__range').length === 0, String(byClassName('dsh-board__range').length))
   check('a folded card hides the blocked switch', byAria('阻塞') === null)
   check('a folded card hides the Session row', byClassName('dsh-board__sessionRow').length === 0, String(byClassName('dsh-board__sessionRow').length))
   check('a folded card hides the check form', byAria('验证了什么') === null)
@@ -2766,9 +2798,15 @@ console.log('\n[46] a version-11 browser mirror migrates to the materials text')
     && findIn(openRichCard, element => element.props && element.props['aria-label'] === '下一步') !== undefined)
   check('the open card keeps the controls it was built with',
     findIn(openRichCard, element => element.props && element.props.className === 'dsh-board__taskStatus') !== undefined
-    && findIn(openRichCard, element => element.props && element.props.className === 'dsh-board__taskMeta') !== undefined
     && findIn(openRichCard, element => element.props && element.props.className === 'dsh-board__taskFields') !== undefined
     && findIn(openRichCard, element => element.props && element.props.className === 'dsh-board__claimForm') !== undefined)
+  const fieldsRow = findIn(openRichCard, element => element.props && element.props.className === 'dsh-board__taskFields')
+  const fieldsDescendants = fieldsRow === undefined ? [] : descendants(fieldsRow, [])
+  check('both decision switches ride the fields row, not a row of their own',
+    fieldsDescendants.some(element => element.props && element.props['aria-label'] === '阻塞')
+    && fieldsDescendants.some(element => element.props && element.props['aria-label'] === '需要我验收')
+    && byClassName('dsh-board__taskMeta').length === 0,
+    String(fieldsDescendants.length))
   check('the other card stays folded', findIn(cardOf('干净的卡'), isFoldedToggle) !== undefined)
   const openToggle = findIn(openRichCard, isOpenedToggle)
   check('the open card offers to fold again', openToggle !== undefined && childText(openToggle) === '收起', openToggle && childText(openToggle))
@@ -3104,6 +3142,46 @@ console.log('\n[46] a version-11 browser mirror migrates to the materials text')
     /padding:\s*6px/.test(emptyRule) && /font-size:\s*11px/.test(emptyRule),
     emptyRule)
   const sharedRule = (source.match(/\.dsh-board__shared \{([^}]*)\}/) || [])[1] || ''
+  check('the Session row asks one question with one control',
+    !source.includes("'task.linkSession'")
+    && !source.includes("'task.unbindSession'")
+    && source.includes("'task.switchSession'"),
+    'session row still split across two controls')
+  check('both decision switches explain themselves on hover',
+    source.includes("'task.blockedHint'")
+    && source.includes("'task.requireHumanHint'")
+    && dictionaries.greenlight.zh['task.blockedHint'].includes('不参与自动派发')
+    && dictionaries.greenlight.zh['task.requireHumanHint'].includes('也要你点'),
+    JSON.stringify({
+      blocked: dictionaries.greenlight.zh['task.blockedHint'],
+      requireHuman: dictionaries.greenlight.zh['task.requireHumanHint'],
+    }))
+  check('the card no longer prints a completion figure',
+    // The bar keeps its width from the figure; only the printed text element is gone.
+    !source.includes("className: 'dsh-board__taskPercent' }, task.progress")
+    && !source.includes('dsh-board__taskMeta'),
+    'a completion figure or its row is still wired')
+  check('the two decision switches share the fields row',
+    source.includes('dsh-board__taskFields') && source.includes("t('task.blockedHint')"),
+    'the switches lost their row')
+  check('a normal Session title is not clipped by a badge-sized cap',
+    /\.dsh-board__chip--session \.dsh-board__sessionTitle \{[\s\S]{0,200}max-width: 300px/.test(source),
+    'the Session chip still caps its title too tightly')
+  check('the manual progress slider is gone for good',
+    !source.includes('dsh-board__range') && !source.includes("type: 'range'"),
+    'progress slider still wired')
+  check('there is no create-only Session button left',
+    !source.includes('task.createSession')
+    && !source.includes('task.creatingSession')
+    && !source.includes('task.createSessionFailed'),
+    'create-only control still wired')
+  check('the dispatch button carries no hover hint',
+    !source.includes("task.dispatchNoSession")
+    && !/title:\s*armed \?/.test(source),
+    'dispatch tooltip still wired')
+  check('the session title rename control is gone',
+    !source.includes('task.syncSessionTitle') && !source.includes('actions.syncTitle'),
+    'rename control still wired')
   check('the materials box fits whole lines and grows with its text',
     /min-height:\s*128px/.test(sharedRule)
     && /max-height:\s*340px/.test(sharedRule)
@@ -3148,6 +3226,49 @@ console.log('\n[46] a version-11 browser mirror migrates to the materials text')
   })
   await settle(300)
   check('a card in review cannot be archived from the card', byButtonText('归档') === null, String(byButtonText('归档')))
+
+  console.log('\n[61] a card pins the Workspace a new Session joins')
+  sessionState.ids = []
+  sessionState.byId = {}
+  sessionState.lastCreateRequest = null
+  await mount({
+    seedHost: archSeed([{
+      id: 't-ws', title: '要选工作区的卡', status: 'todo', progress: 0, sessionId: '', contextSentAt: 0,
+    }]),
+  })
+  await settle(320)
+  openCards()
+  await settle(180)
+  const workspaceSelect = byAria('工作区')
+  check('the card offers a Workspace choice', workspaceSelect !== null, textOf().slice(0, 400))
+  // The choice belongs to the dispatch click, so it sits in the same row as the
+  // button that creates the Session rather than in a row of its own.
+  const workspacePickRow = byClassName('dsh-board__workspacePick')[0]
+  check('the Workspace choice sits with the dispatch control',
+    workspacePickRow !== undefined
+    && descendants(workspacePickRow, []).some(element => element.type === 'select'),
+    String(workspacePickRow))
+  check('no separate Workspace row is left behind',
+    byClassName('dsh-board__workspaceRow').length === 0,
+    String(byClassName('dsh-board__workspaceRow').length))
+  const workspaceLabels = workspaceSelect === null ? [] : descendants(workspaceSelect, [])
+    .filter(element => element.type === 'option').map(childText)
+  check('the Workspace choice lists the Host order plus automatic',
+    workspaceLabels[0] === '自动（Host 列表第一个）' && workspaceLabels[1] === '工作区一' && workspaceLabels[2] === '工作区二',
+    JSON.stringify(workspaceLabels))
+  change(workspaceSelect, 'ws-2')
+  await settle(700)
+  check('the choice is stored on the card',
+    stored().projects[0].tasks[0].workspaceId === 'ws-2',
+    stored().projects[0].tasks[0].workspaceId)
+  check('the Host received the pin',
+    hostState.board.projects[0].tasks[0].workspaceId === 'ws-2',
+    hostState.board.projects[0].tasks[0].workspaceId)
+  click(byButtonText('派给会话'))
+  await settle(700)
+  check('the new Session is created in the pinned Workspace',
+    sessionState.lastCreateRequest !== null && sessionState.lastCreateRequest.workspaceId === 'ws-2',
+    JSON.stringify(sessionState.lastCreateRequest))
 
   console.log('\n' + (failures === 0 ? 'ALL ' + checks + ' CHECKS PASSED' : failures + ' of ' + checks + ' CHECKS FAILED'))
   process.exit(failures === 0 ? 0 : 1)
