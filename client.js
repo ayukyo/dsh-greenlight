@@ -193,18 +193,17 @@ const MEMORY_PAGE = 6
       'task.acceptedHuman': '人工通过',
       'task.acceptanceBlocked': '自动验收未通过',
       'project.acceptance': '验收方式',
-      'project.acceptanceAuto': '自动验收',
-      'project.acceptanceHuman': '人工验收',
-      'project.acceptanceAutoHint': '能核对的自动通过，核对不了才转人工',
-      'project.acceptanceHumanHint': '所有完成都需人工点「通过」',
+      'project.modeAuto': '全自动验收',
+      'project.modeAutoDebt': '自动验收，未验证转人工',
+      'project.modeHuman': '全部人工验收',
+      'project.modeHint.auto': '规则全部满足就自动通过，有未验证事项也照样通过',
+      'project.modeHint.autoDebt': '规则全部满足就自动通过；只要还有未验证事项，就交给你决定',
+      'project.modeHint.human': '所有完成都需人工点「通过」',
       'rules.title': '自动验收规则',
       'rules.requireEvidence': '需要完成说明',
       'rules.requireDeliverables': '需要交付物',
       'rules.verifyDeliverables': '校验交付物文件',
       'rules.requireSession': '需要绑定会话',
-      'project.ruleBlockOnDebt': '有未验证事项就转人工',
-      'rules.rootDir': '项目根目录',
-      'rules.rootDirHint': '相对交付物按此目录查找，留空则无法校验相对路径',
       'rules.missing': '交付物缺失',
       'task.deliverables': '交付物',
       'task.detailsHidden': '详情已折叠：%s',
@@ -433,18 +432,17 @@ const MEMORY_PAGE = 6
       'task.acceptedHuman': 'Accepted by you',
       'task.acceptanceBlocked': 'Automatic acceptance failed',
       'project.acceptance': 'Acceptance',
-      'project.acceptanceAuto': 'Automatic',
-      'project.acceptanceHuman': 'Manual',
-      'project.acceptanceAutoHint': 'Verifiable work closes itself; the rest comes to you',
-      'project.acceptanceHumanHint': 'Every completion needs your approval',
+      'project.modeAuto': 'Fully automatic',
+      'project.modeAutoDebt': 'Automatic, unverified comes to me',
+      'project.modeHuman': 'All manual',
+      'project.modeHint.auto': 'Every rule met closes the card, even with unverified items left',
+      'project.modeHint.autoDebt': 'Every rule met closes the card; anything unverified comes to you',
+      'project.modeHint.human': 'Every completion needs your approval',
       'rules.title': 'Automatic acceptance rules',
       'rules.requireEvidence': 'Requires a completion note',
       'rules.requireDeliverables': 'Requires deliverables',
       'rules.verifyDeliverables': 'Verifies deliverable files',
       'rules.requireSession': 'Requires a Session',
-      'project.ruleBlockOnDebt': 'Send to me when anything is unverified',
-      'rules.rootDir': 'Project root',
-      'rules.rootDirHint': 'Relative deliverables resolve here; without it they cannot be checked',
       'rules.missing': 'Missing deliverables',
       'task.deliverables': 'Deliverables',
       'task.detailsHidden': 'Details collapsed: %s',
@@ -1926,24 +1924,6 @@ const MEMORY_PAGE = 6
   color: var(--dsw-alias-label-secondary);
   cursor: pointer;
 }
-.dsh-board__rootDirRow {
-  display: flex;
-  flex: 1 1 300px;
-  align-items: center;
-  gap: 8px;
-  min-width: 220px;
-}
-.dsh-board__rootDirLabel {
-  flex: none;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 11px;
-  line-height: 16px;
-  white-space: nowrap;
-}
-.dsh-board__rootDirRow .dsh-board__input {
-  flex: 1 1 auto;
-  min-width: 0;
-}
 .dsh-board__evidence,
 .dsh-board__deliverables {
   margin: 0;
@@ -3423,6 +3403,20 @@ const MEMORY_PAGE = 6
      * @param project - project to measure.
      * @returns an integer from 0 to 100.
      */
+    /**
+     * The single acceptance choice a project's stored pair describes.
+     *
+     * Storage keeps `acceptanceMode` and `acceptanceRules.blockOnDebt` apart
+     * because the Host verifies them separately, but to a reader they are one
+     * decision, so the select shows exactly three states.
+     * @param project - the project to read.
+     * @returns `auto`, `autoDebt`, or `human`.
+     */
+    function acceptanceChoiceOf(project) {
+      if (project.acceptanceMode === 'human') return 'human'
+      return project.acceptanceRules.blockOnDebt === true ? 'autoDebt' : 'auto'
+    }
+
     function projectPercent(project) {
       if (project.tasks.length === 0) return 0
       // A card counts in full only once it is actually done: work waiting in
@@ -4901,14 +4895,17 @@ const MEMORY_PAGE = 6
             h('span', { className: 'dsh-board__sectionHint' }, t('project.acceptance')),
             h('select', {
               className: 'dsh-board__select dsh-board__select--compact',
-              value: project.acceptanceMode === 'human' ? 'human' : 'auto',
+              // One control for the whole decision: the stored pair (mode, blockOnDebt)
+              // reads back as exactly one of these three choices.
+              value: acceptanceChoiceOf(project),
               'aria-label': t('project.acceptance'),
-              onChange: (event) => { actions.setAcceptance(event.target.value) },
+              onChange: (event) => { actions.setAcceptanceMode(event.target.value) },
             },
-            h('option', { value: 'auto' }, t('project.acceptanceAuto')),
-            h('option', { value: 'human' }, t('project.acceptanceHuman'))),
+            h('option', { value: 'auto' }, t('project.modeAuto')),
+            h('option', { value: 'autoDebt' }, t('project.modeAutoDebt')),
+            h('option', { value: 'human' }, t('project.modeHuman'))),
             h('span', { className: 'dsh-board__sectionHint' },
-              project.acceptanceMode === 'human' ? t('project.acceptanceHumanHint') : t('project.acceptanceAutoHint'))),
+              t('project.modeHint.' + acceptanceChoiceOf(project)))),
           project.acceptanceMode === 'human'
             ? null
             : h('div', { className: 'dsh-board__rules' },
@@ -4918,7 +4915,6 @@ const MEMORY_PAGE = 6
                 ['requireDeliverables', 'rules.requireDeliverables'],
                 ['verifyDeliverables', 'rules.verifyDeliverables'],
                 ['requireSession', 'rules.requireSession'],
-                ['blockOnDebt', 'project.ruleBlockOnDebt'],
               ].map(([key, labelKey]) =>
                 h('label', { className: 'dsh-board__ruleLabel', key },
                   h('input', {
@@ -4927,20 +4923,7 @@ const MEMORY_PAGE = 6
                     'aria-label': t(labelKey),
                     onChange: (event) => { actions.setRule(key, event.target.checked) },
                   }),
-                  h('span', null, t(labelKey)))),
-              project.acceptanceRules.verifyDeliverables === true
-                ? h('div', { className: 'dsh-board__rootDirRow' },
-                  h('span', { className: 'dsh-board__rootDirLabel' }, t('rules.rootDir')),
-                  h('input', {
-                    className: 'dsh-board__input dsh-board__input--compact',
-                    type: 'text',
-                    value: project.rootDir,
-                    placeholder: t('rules.rootDirHint'),
-                    'aria-label': t('rules.rootDir'),
-                    title: t('rules.rootDirHint'),
-                    onChange: (event) => { actions.setRootDir(event.target.value) },
-                  }))
-                : null),
+                  h('span', null, t(labelKey))))),
           h(ProgressSummary, { project, t }),
           h('div', { className: 'dsh-board__stats' },
             h('span', { className: 'dsh-board__stat' },
@@ -5390,11 +5373,25 @@ const MEMORY_PAGE = 6
             },
           })
         },
-        setAcceptance: (mode) => {
+        // Acceptance is one decision, so it is one control: how much is decided
+        // automatically, and whether an unverified card must come back to a human.
+        // The two storage fields (mode + blockOnDebt) move together in one op.
+        setAcceptanceMode: (value) => {
           if (selectedProjectId === '') return
-          const next = mode === 'human' ? 'human' : 'auto'
-          replaceProject(selectedProjectId, project => ({ ...project, acceptanceMode: next }))
-          sync.enqueue([{ type: 'project.setAcceptance', projectId: selectedProjectId, mode: next }])
+          const nextMode = value === 'human' ? 'human' : 'auto'
+          // Only the middle choice asks for a human on unverified work.
+          const nextDebt = value === 'autoDebt'
+          replaceProject(selectedProjectId, project => ({
+            ...project,
+            acceptanceMode: nextMode,
+            acceptanceRules: { ...project.acceptanceRules, blockOnDebt: nextDebt },
+          }))
+          sync.enqueue([{
+            type: 'project.setAcceptance',
+            projectId: selectedProjectId,
+            mode: nextMode,
+            rules: { blockOnDebt: nextDebt },
+          }])
         },
         setRule: (key, value) => {
           if (selectedProjectId === '') return
@@ -5407,11 +5404,6 @@ const MEMORY_PAGE = 6
             projectId: selectedProjectId,
             rules: { [key]: value },
           }])
-        },
-        setRootDir: (value) => {
-          if (selectedProjectId === '') return
-          replaceProject(selectedProjectId, project => ({ ...project, rootDir: value }))
-          sync.enqueue([{ type: 'project.setAcceptance', projectId: selectedProjectId, rootDir: value }])
         },
         restoreTask: (projectId, taskId) => { if (sync.restoreTask !== undefined) sync.restoreTask(projectId, taskId) },
         recheck: () => {

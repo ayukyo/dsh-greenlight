@@ -1849,7 +1849,9 @@ console.log('\n[38] automatic acceptance: presentation and the mode switch')
   openCards()
 
   check('rule checkboxes render', byAria('需要完成说明') !== null && byAria('校验交付物文件') !== null)
-  check('root directory field is hidden until verification is on', byAria('项目根目录') !== null)
+  check('the project root field is gone: the materials block carries paths',
+    byAria('项目根目录') === null && byClassName('dsh-board__rootDirRow').length === 0,
+    String(byClassName('dsh-board__rootDirRow').length))
   check('deliverables are shown on the card', textOf().includes('交付物'), textOf().slice(0, 260))
   check('a missing deliverable is called out', textOf().includes('交付物缺失'), textOf().slice(0, 320))
   check('the completion note is shown', textOf().includes('完成说明'))
@@ -1861,21 +1863,13 @@ console.log('\n[38] automatic acceptance: presentation and the mode switch')
   check('rule persisted locally', stored().projects[0].acceptanceRules.requireDeliverables === true, String(stored().projects[0].acceptanceRules.requireDeliverables))
   check('rule reached the host', hostState.board.projects[0].acceptanceRules.requireDeliverables === true, String(hostState.board.projects[0].acceptanceRules.requireDeliverables))
 
-  // Turning verification off hides the root field.
+  // Turning verification off is still one synced op.
   toggle(byAria('校验交付物文件'), false)
   await settle(420)
   await flush()
   check('verification toggle reached the host', hostState.board.projects[0].acceptanceRules.verifyDeliverables === false)
-  check('root field disappears with verification off', byAria('项目根目录') === null)
-
-  // The project root is stored through the same op.
-  toggle(byAria('校验交付物文件'), true)
-  await settle(300)
-  change(byAria('项目根目录'), 'D:/repo')
-  await settle(420)
-  await flush()
-  check('root directory stored locally', stored().projects[0].rootDir === 'D:/repo', stored().projects[0].rootDir)
-  check('root directory reached the host', hostState.board.projects[0].rootDir === 'D:/repo', hostState.board.projects[0].rootDir)
+  check('nothing appears in the root row when verification is off',
+    byAria('项目根目录') === null)
 
 console.log('\n[40] claims, layers, next action, debt and the audit trail')
   const disciplineSeed = {
@@ -2536,61 +2530,76 @@ console.log('\n[46] a version-11 browser mirror migrates to the materials text')
   await mount({ seedHost: debtRuleSeed })
   await settle(400)
 
-  const debtSwitch = byAria('有未验证事项就转人工')
-  check('the project header renders the blockOnDebt rule', debtSwitch !== null, textOf().slice(0, 320))
-  check('the new rule sits with the existing rule switches',
+  // Acceptance is one decision: the select carries mode + blockOnDebt together.
+  const acceptanceSelect = byAria('验收方式')
+  check('the acceptance select renders', acceptanceSelect !== null, textOf().slice(0, 320))
+  check('a project that turns debt escalation off reads as fully automatic',
+    acceptanceSelect !== null && acceptanceSelect.props.value === 'auto',
+    acceptanceSelect && String(acceptanceSelect.props.value))
+  check('the four rules keep their own switches',
     byAria('需要完成说明') !== null
     && byAria('需要交付物') !== null
     && byAria('校验交付物文件') !== null
     && byAria('需要绑定会话') !== null,
     textOf().slice(0, 320))
-  check('a project that turned the rule off shows it unchecked',
-    debtSwitch !== null && debtSwitch.props.checked === false,
-    debtSwitch && String(debtSwitch.props.checked))
+  check('the debt switch is no longer a rule of its own',
+    byAria('有未验证事项就转人工') === null,
+    textOf().slice(0, 320))
 
-  // The rule rides the same save channel as the other four: one
-  // project.setAcceptance op carrying the changed rule.
+  // Picking the middle mode writes both fields in one op.
   const debtOpsBeforeOn = sentOps.length
-  toggle(debtSwitch, true)
-  check('the saved rules carry blockOnDebt at once',
-    stored().projects[0].acceptanceRules.blockOnDebt === true,
-    JSON.stringify(stored().projects[0].acceptanceRules))
+  change(acceptanceSelect, 'autoDebt')
+  check('the choice lands locally at once',
+    stored().projects[0].acceptanceMode === 'auto'
+    && stored().projects[0].acceptanceRules.blockOnDebt === true,
+    JSON.stringify({ mode: stored().projects[0].acceptanceMode, rules: stored().projects[0].acceptanceRules }))
   await settle(420)
   await flush()
   const debtOnOps = sentOps.slice(debtOpsBeforeOn).filter(op => op.type === 'project.setAcceptance' && op.projectId === 'p-debt-rule')
-  check('turning it on saves through the existing acceptance channel',
-    debtOnOps.length === 1 && debtOnOps[0].rules !== undefined && debtOnOps[0].rules.blockOnDebt === true,
+  check('one op carries the mode and the debt rule together',
+    debtOnOps.length === 1
+    && debtOnOps[0].mode === 'auto'
+    && debtOnOps[0].rules !== undefined
+    && debtOnOps[0].rules.blockOnDebt === true,
     JSON.stringify(debtOnOps))
-  check('the rule needs no new operation',
-    JSON.stringify([...new Set(sentOps.slice(debtOpsBeforeOn).map(op => op.type))]) === JSON.stringify(['project.setAcceptance']),
-    JSON.stringify([...new Set(sentOps.slice(debtOpsBeforeOn).map(op => op.type))]))
-  check('the saved rules keep blockOnDebt on',
-    stored().projects[0].acceptanceRules.blockOnDebt === true,
-    JSON.stringify(stored().projects[0].acceptanceRules))
-  check('the host stored blockOnDebt',
-    hostState.board.projects[0].acceptanceRules.blockOnDebt === true,
-    JSON.stringify(hostState.board.projects[0].acceptanceRules))
-  check('the switch stays checked after the round trip',
-    byAria('有未验证事项就转人工') !== null && byAria('有未验证事项就转人工').props.checked === true,
-    byAria('有未验证事项就转人工') && String(byAria('有未验证事项就转人工').props.checked))
+  check('the host stored both halves',
+    hostState.board.projects[0].acceptanceMode === 'auto'
+    && hostState.board.projects[0].acceptanceRules.blockOnDebt === true,
+    JSON.stringify({ mode: hostState.board.projects[0].acceptanceMode, rules: hostState.board.projects[0].acceptanceRules }))
+  check('the select reads back the middle mode',
+    byAria('验收方式').props.value === 'autoDebt',
+    String(byAria('验收方式').props.value))
 
+  // Full manual hides the rule row entirely.
+  const manualOpsBefore = sentOps.length
+  change(byAria('验收方式'), 'human')
+  await settle(420)
+  await flush()
+  const manualOps = sentOps.slice(manualOpsBefore).filter(op => op.type === 'project.setAcceptance' && op.projectId === 'p-debt-rule')
+  check('the manual mode reaches the host',
+    manualOps.length === 1 && manualOps[0].mode === 'human',
+    JSON.stringify(manualOps))
+  check('manual mode hides the rules row', byAria('需要完成说明') === null)
+
+  // Back to fully automatic: the debt rule goes off with the mode.
   const debtOpsBeforeOff = sentOps.length
-  toggle(byAria('有未验证事项就转人工'), false)
+  change(byAria('验收方式'), 'auto')
   await settle(420)
   await flush()
   const debtOffOps = sentOps.slice(debtOpsBeforeOff).filter(op => op.type === 'project.setAcceptance' && op.projectId === 'p-debt-rule')
-  check('turning it off saves blockOnDebt false',
-    debtOffOps.length === 1 && debtOffOps[0].rules !== undefined && debtOffOps[0].rules.blockOnDebt === false,
+  check('the automatic mode clears the debt rule in the same op',
+    debtOffOps.length === 1
+    && debtOffOps[0].mode === 'auto'
+    && debtOffOps[0].rules !== undefined
+    && debtOffOps[0].rules.blockOnDebt === false,
     JSON.stringify(debtOffOps))
-  check('the saved rules clear blockOnDebt',
-    stored().projects[0].acceptanceRules.blockOnDebt === false,
-    JSON.stringify(stored().projects[0].acceptanceRules))
-  check('the host also cleared it',
-    hostState.board.projects[0].acceptanceRules.blockOnDebt === false,
-    JSON.stringify(hostState.board.projects[0].acceptanceRules))
-  check('the switch is unchecked after the round trip',
-    byAria('有未验证事项就转人工') !== null && byAria('有未验证事项就转人工').props.checked === false,
-    byAria('有未验证事项就转人工') && String(byAria('有未验证事项就转人工').props.checked))
+  check('the host cleared it too',
+    hostState.board.projects[0].acceptanceRules.blockOnDebt === false
+    && hostState.board.projects[0].acceptanceMode === 'auto',
+    JSON.stringify({ mode: hostState.board.projects[0].acceptanceMode, rules: hostState.board.projects[0].acceptanceRules }))
+  check('the select is back to fully automatic',
+    byAria('验收方式').props.value === 'auto',
+    String(byAria('验收方式').props.value))
 
   console.log('\n[51] a long finished card folds its detail until asked')
   const longSeed = (tasks) => ({
@@ -2664,12 +2673,16 @@ console.log('\n[46] a version-11 browser mirror migrates to the materials text')
       zhChip: dictionaries.greenlight.zh['task.requireHumanChip'],
       enChip: dictionaries.greenlight.en['task.requireHumanChip'],
     }))
-  check('the debt rule is localized',
-    dictionaries.greenlight.zh['project.ruleBlockOnDebt'] === '有未验证事项就转人工'
-    && dictionaries.greenlight.en['project.ruleBlockOnDebt'] === 'Send to me when anything is unverified',
+  check('the three acceptance modes are localized',
+    dictionaries.greenlight.zh['project.modeAuto'] === '全自动验收'
+    && dictionaries.greenlight.zh['project.modeAutoDebt'] === '自动验收，未验证转人工'
+    && dictionaries.greenlight.zh['project.modeHuman'] === '全部人工验收'
+    && dictionaries.greenlight.en['project.modeAutoDebt'] === 'Automatic, unverified comes to me',
     JSON.stringify({
-      zh: dictionaries.greenlight.zh['project.ruleBlockOnDebt'],
-      en: dictionaries.greenlight.en['project.ruleBlockOnDebt'],
+      zhAuto: dictionaries.greenlight.zh['project.modeAuto'],
+      zhDebt: dictionaries.greenlight.zh['project.modeAutoDebt'],
+      zhHuman: dictionaries.greenlight.zh['project.modeHuman'],
+      enDebt: dictionaries.greenlight.en['project.modeAutoDebt'],
     }))
 
   console.log('\n[52] a folded card is a summary, not a form')
@@ -3132,11 +3145,17 @@ console.log('\n[46] a version-11 browser mirror migrates to the materials text')
     byClassName('dsh-board__chip--gone').length === 0,
     String(byClassName('dsh-board__chip--gone').length))
 
-  console.log('\n[59] small UI details: a labelled root dir, slim empty states, a box that fits')
-  check('the project root field carries a visible label',
-    source.includes('dsh-board__rootDirLabel')
-    && dictionaries.greenlight.zh['rules.rootDir'] === '项目根目录',
-    'root dir label missing')
+  console.log('\n[59] small UI details: slim empty states, a box that fits')
+  check('the project root field is gone: paths live in the materials block',
+    !source.includes('dsh-board__rootDirLabel')
+    && !source.includes("'rules.rootDir'")
+    && !source.includes('setRootDir'),
+    'root dir control still wired')
+  check('the debt rule is folded into the acceptance select',
+    !source.includes("'project.ruleBlockOnDebt'")
+    && source.includes("'project.modeAutoDebt'")
+    && source.includes('acceptanceChoiceOf'),
+    'the debt rule is still a separate switch')
   const emptyRule = (source.match(/\.dsh-board__empty \{([^}]*)\}/) || [])[1] || ''
   check('an empty section is a line, not a block',
     /padding:\s*6px/.test(emptyRule) && /font-size:\s*11px/.test(emptyRule),

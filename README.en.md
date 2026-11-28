@@ -38,14 +38,16 @@ Humans stop reviewing everything and start handling exceptions. That is the gree
 ## Features
 
 **Acceptance**
-- **Real deliverable checks** — the Host probes the disk before committing; relative paths resolve
-  against the project root, and directories or empty files count as missing
+- **Real deliverable checks** — the Host probes the disk before committing; directories or empty
+  files count as missing (absolute paths are safest; write path conventions into the materials block)
 - **Verification layers** — `static` / `unit` / `build` / `host` / `device`; a project can require
   specific layers, and an uncovered layer blocks auto-acceptance
 - **Claims** — `{ what, how, layer, outcome }`; a `pass` only counts when "how" is filled in, and a
   `fail` blocks the card
+- **Three acceptance levels** — fully automatic / automatic with unverified work coming to you
+  (default) / all manual
 - **Configurable rules** — require evidence / require deliverables / verify deliverables on disk /
-  require a Session / require a verified claim
+  require a Session
 - **Verification debt** — anything still unverified is recorded and visible, not silently dropped
 - **Column gates** — optionally refuse to move a card into review without evidence or deliverables
 - **Warnings vs blockers** — small gaps surface as notes instead of dumping every card on a human
@@ -121,7 +123,7 @@ greenlight_task_submit {
 | `greenlight_task_create` | Create a card (title, description, priority, due date, tags) |
 | `greenlight_task_update` | Update a card: status, progress, note, blocked, evidence, deliverables, next action |
 | `greenlight_task_submit` | **Deliver**: evidence + claims + deliverables, judged by the Host |
-| `greenlight_acceptance` | Read/write project acceptance mode, rules, required layers, root dir |
+| `greenlight_acceptance` | Read/write project acceptance mode, rules, required layers |
 | `greenlight_preview` | Dry-run operations, returns the changes, writes nothing |
 | `greenlight_recheck` | Re-probe deliverables, flag the ones that went missing |
 | `greenlight_review` | Record an independent review (verdict, note, author) |
@@ -132,6 +134,21 @@ greenlight_task_submit {
 
 ## Acceptance rules
 
+Two layers: **acceptance level** (one select in the UI) and **rules** (`greenlight_acceptance`).
+
+### Acceptance level
+
+| Level | Stored as | Meaning |
+|---|---|---|
+| Fully automatic | `acceptanceMode=auto` + `blockOnDebt` off | Every rule met closes the card, even with unverified work left |
+| Automatic, unverified comes to me (default) | `acceptanceMode=auto` + `blockOnDebt` on | Every rule met closes the card; anything unverified or undecided goes to a human |
+| All manual | `acceptanceMode=human` | Every completion needs your approval |
+
+The select writes both halves in one click (`blockOnDebt` covers the debt an agent declares through
+`pendingVerification`).
+
+### Rules
+
 | Rule | Default | Meaning |
 |---|---|---|
 | `requireEvidence` | on | A completion note is required |
@@ -139,12 +156,14 @@ greenlight_task_submit {
 | `verifyDeliverables` | on | Declared deliverables must exist on disk |
 | `requireSession` | off | The card must own a Session |
 | `requireVerifiedClaim` | off | At least one passing claim with a method |
-| `blockOnDebt` | on | Anything unverified or undecided sends the card to a human (the agent declares it through `pendingVerification`) |
 | `requiredLayers` | none | Verification layers the completion must cover |
-| `rootDir` | none | Base directory for relative deliverables |
+
+`rootDir` (base directory for relative deliverables) is still a document field, but the UI no longer
+offers an input for it: write path conventions into the materials block, and prefer absolute paths.
 
 Auto-acceptance requires: automatic mode, no per-card human flag (the card's own "needs my
-acceptance" switch), progress at 100%, not blocked, not failed, and every enabled rule satisfied.
+acceptance" switch), progress at 100%, not blocked, not failed, and every enabled rule satisfied
+(plus no verification debt while `blockOnDebt` is on).
 Any gap escalates with a concrete reason.
 
 ## Data
@@ -162,10 +181,12 @@ The Host owns the document and the browser keeps a mirror, so it survives restar
 **Can an agent close its own card?** Yes, but only when verification passes. `greenlight_task_submit`
 always goes through acceptance; a human moving the card is recorded as a human acceptance.
 
-**Do I need a project root?** Recommended when using relative deliverable paths. Without it, relative
-paths cannot be located — the card escalates with "cannot locate deliverable" instead of pretending.
+**How do I point at deliverable paths?** Absolute paths are safest. The UI no longer has a project
+root field — write the path conventions into the materials block (the agent reads it). Without a root,
+relative paths cannot be located and the card escalates with "cannot locate deliverable".
 
-**Can I turn auto-acceptance off?** Yes: set the project to human acceptance.
+**Can I turn auto-acceptance off?** Yes: pick "all manual". To keep the machine judging and only hand
+you the cards that still carry unverified work, keep the default middle level.
 
 **How is this different from `dsh-taskboard`?** That plugin keeps `done` permanently human-only.
 Greenlight lets the machine judge first and shows humans only the exceptions.

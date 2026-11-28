@@ -1,6 +1,6 @@
 {
   "name": "dsh-greenlight",
-  "version": "0.4.14",
+  "version": "0.4.15",
   "description": "Verifiable task board for DeepSeek Harness: project subtasks bound to sessions, with automatic acceptance — a card closes itself when its claims and deliverables check out, and only the unverifiable ones ask a human.",
   "keywords": [
     "dsh",
